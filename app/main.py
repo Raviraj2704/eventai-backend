@@ -93,27 +93,33 @@ app.add_middleware(
 # IMPORT ROUTERS (AFTER MIDDLEWARE)
 # ============================================================================
 
+# 1. Import all your route files
 from app.routes import (
-    auth, users, sessions, speakers, resources, ratings,
-    announcements, social, badges, challenges, learning_paths, partners
+    auth, sessions, speakers, resources, badges, 
+    challenges, leaderboard, learning_paths, ratings,
+    social, announcements, engagement, partners, users, admin
 )
 
 # ============================================================================
 # INCLUDE ROUTERS
 # ============================================================================
 
-app.include_router(auth.router, prefix="/api/v1/auth", tags=["auth"])
-app.include_router(users.router, prefix="/api/v1/users", tags=["users"])
-app.include_router(sessions.router, prefix="/api/v1/sessions", tags=["sessions"])
-app.include_router(speakers.router, prefix="/api/v1/speakers", tags=["speakers"])
-app.include_router(resources.router, prefix="/api/v1/resources", tags=["resources"])
-app.include_router(ratings.router, prefix="/api/v1/ratings", tags=["ratings"])
-app.include_router(announcements.router, prefix="/api/v1/announcements", tags=["announcements"])
-app.include_router(social.router, prefix="/api/v1/social", tags=["social"])
-app.include_router(badges.router, prefix="/api/v1/badges", tags=["badges"])
-app.include_router(challenges.router, prefix="/api/v1/challenges", tags=["challenges"])
-app.include_router(learning_paths.router, prefix="/api/v1/learning-paths", tags=["learning_paths"])
-app.include_router(partners.router, prefix="/api/v1/partners", tags=["partners"])
+# 2. Register all routers WITH the correct API prefix!
+app.include_router(auth.router, prefix="/api/v1/auth", tags=["Auth"])
+app.include_router(sessions.router, prefix="/api/v1/sessions", tags=["Sessions"])
+app.include_router(speakers.router, prefix="/api/v1/speakers", tags=["Speakers"])
+app.include_router(resources.router, prefix="/api/v1/resources", tags=["Resources"])
+app.include_router(badges.router, prefix="/api/v1/badges", tags=["Badges"])
+app.include_router(challenges.router, prefix="/api/v1/challenges", tags=["Challenges"])
+app.include_router(leaderboard.router, prefix="/api/v1/leaderboard", tags=["Leaderboard"])
+app.include_router(learning_paths.router, prefix="/api/v1/learning_paths", tags=["Learning Paths"])
+app.include_router(ratings.router, prefix="/api/v1/ratings", tags=["Ratings"])
+app.include_router(social.router, prefix="/api/v1/social", tags=["Social"])
+app.include_router(announcements.router, prefix="/api/v1/announcements", tags=["Announcements"])
+app.include_router(engagement.router, prefix="/api/v1/engagement", tags=["Engagement"])
+app.include_router(partners.router, prefix="/api/v1/partners", tags=["Partners"])
+app.include_router(users.router, prefix="/api/v1/users", tags=["Users"])
+app.include_router(admin.router, prefix="/api/v1/admin", tags=["Admin"])
 
 # ============================================================================
 # ENDPOINTS (Merged existing health check + new events endpoints)
