@@ -550,6 +550,8 @@ class Rating(Base):
     user = relationship("User", back_populates="ratings")
     session = relationship("Session", back_populates="ratings", foreign_keys=[session_id])
     resource = relationship("Resource", back_populates="ratings", foreign_keys=[resource_id])
+
+    learning_path = relationship("LearningPath", back_populates="ratings", foreign_keys=[learning_path_id])
     
     # Indexes
     __table_args__ = (
@@ -566,12 +568,6 @@ class Rating(Base):
 
 class Resource(Base):
     """
-    Learning materials and downloadable files
-    
-    Attributes:
-        id: Unique resource identifier
-        title: Resource title
-        description: Resource description
         resource_type: pdf/video/presentation/document/code/image
         category: Resource category
         file_url: Cloud storage URL
