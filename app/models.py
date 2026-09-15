@@ -1237,7 +1237,7 @@ class LearningPath(Base):
     )
     ratings = relationship(
         "Rating",
-        back_populates="learning_path",
+        back_populates="ratings",
         cascade="all, delete-orphan",
         foreign_keys="Rating.learning_path_id"
     )
