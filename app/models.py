@@ -505,23 +505,6 @@ class SessionAttendance(Base):
 # ============================================================================
 
 class Rating(Base):
-    """
-    User ratings for sessions, speakers, and other content
-    
-    Attributes:
-        id: Unique rating identifier
-        user_id: User who rated
-        rating_type: session/speaker/event/experience/partner
-        target_id: ID of rated item (polymorphic)
-        score: Rating value (1-5)
-        feedback: Optional feedback text
-        is_anonymous: Anonymous rating flag
-        helpful_count: Upvotes on this rating
-        session_id: Session reference (if rating session)
-        resource_id: Resource reference (if rating resource)
-        created_at: Rating timestamp
-        updated_at: Last update timestamp
-    """
     __tablename__ = "ratings"
 
     resource_id = Column(Integer, ForeignKey("resources.id"), index=True) 
@@ -551,7 +534,7 @@ class Rating(Base):
     session = relationship("Session", back_populates="ratings", foreign_keys=[session_id])
     resource = relationship("Resource", back_populates="ratings", foreign_keys=[resource_id])
 
-    learning_path = relationship("LearningPath", back_populates="ratings", foreign_keys=[learning_path_id])
+    learning_path = relationship("LearningPath", back_populates="ratings",)
     
     # Indexes
     __table_args__ = (
@@ -1164,28 +1147,6 @@ class Partnership(Base):
 # ============================================================================
 
 class LearningPath(Base):
-    """
-    Structured learning path definitions
-    
-    Attributes:
-        id: Unique path identifier
-        title: Path title
-        description: Detailed description
-        icon_emoji: Emoji icon
-        difficulty_level: beginner/intermediate/advanced/expert
-        duration_weeks: Estimated completion time
-        outcomes: JSON array of learning outcomes
-        benefits: JSON array of benefits
-        prerequisites: JSON array of prerequisites
-        instructor_id: Instructor/creator reference
-        total_modules: Number of modules
-        average_rating: Path rating (1-5)
-        total_ratings: Number of ratings
-        enrollments: Total enrollments
-        is_published: Publication status
-        created_at: Creation timestamp
-        updated_at: Last update timestamp
-    """
     __tablename__ = "learning_paths"
     
     # Primary Key
