@@ -37,8 +37,12 @@ def register(request: RegisterSchema, db: Session = Depends(get_db)):
                 detail="Email already registered"
             )
         
+        # ✅ Safely extract and clean the password (prevents bcrypt 72-byte crash)
+        raw_pw = request.password.get_secret_value() if hasattr(request.password, 'get_secret_value') else str(request.password)
+        clean_password = raw_pw.strip()[:72]
+        
         # ✅ Hash password
-        hashed_password = hash_password(request.password)
+        hashed_password = hash_password(clean_password)
         
         # ✅ Create new user
         new_user = User(
