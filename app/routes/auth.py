@@ -46,10 +46,11 @@ def register(request: RegisterSchema, db: Session = Depends(get_db)):
         
         # ✅ Create new user
         new_user = User(
+            username=request.email.split("@")[0],
             first_name=request.first_name,
             last_name=request.last_name,
             email=request.email,
-            hashed_password=hashed_password,
+            password_hash=hashed_password,
             is_active=True,
             email_verified=True,
             verification_token=None
