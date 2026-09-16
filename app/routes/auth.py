@@ -52,8 +52,6 @@ def register(request: RegisterSchema, db: Session = Depends(get_db)):
             email=request.email,
             password_hash=hashed_password,
             is_active=True,
-            email_verified=True,
-            verification_token=None
         )
         
         # ✅ Save to database
