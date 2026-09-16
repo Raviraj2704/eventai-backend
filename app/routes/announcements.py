@@ -24,7 +24,7 @@ from app.utils.email import send_announcement_email
 
 
 logger = logging.getLogger(__name__)
-router = APIRouter(prefix="/api/v1/announcements", tags=["Announcements"])
+router = APIRouter(tags=["Announcements"])
 
 
 # ============================================================================

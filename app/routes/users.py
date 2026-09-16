@@ -22,7 +22,7 @@ from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 
 
 logger = logging.getLogger(__name__)
-router = APIRouter(prefix="/api/v1/users", tags=["Users"])
+router = APIRouter(tags=["Users"])
 security = HTTPBearer()
 
 

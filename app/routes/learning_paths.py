@@ -27,7 +27,7 @@ from app.routes.users import get_current_user
 
 
 logger = logging.getLogger(__name__)
-router = APIRouter(prefix="/api/v1/learning-paths", tags=["Learning Paths"])
+router = APIRouter(tags=["Learning Paths"])
 
 
 # ============================================================================

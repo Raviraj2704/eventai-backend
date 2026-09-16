@@ -15,7 +15,7 @@ from app.utils.auth import hash_password, verify_password, create_access_token, 
 from datetime import datetime
 
 logger = logging.getLogger(__name__)
-router = APIRouter()
+router = APIRouter(tags=["Auth"])
 
 # ============================================================================
 # REGISTER ENDPOINT

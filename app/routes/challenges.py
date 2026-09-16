@@ -25,7 +25,7 @@ from app.utils.email import send_badge_earned_email
 
 
 logger = logging.getLogger(__name__)
-router = APIRouter(prefix="/api/v1/challenges", tags=["Challenges"])
+router = APIRouter(tags=["Challengers"])
 
 
 # ============================================================================

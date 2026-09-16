@@ -20,7 +20,7 @@ from app.schemas import (
 
 
 logger = logging.getLogger(__name__)
-router = APIRouter(prefix="/api/v1/partnerships", tags=["Partnerships"])
+router = APIRouter(tags=["Partners"])
 
 
 # ============================================================================
