@@ -90,35 +90,21 @@ def login(request: LoginSchema, db: Session = Depends(get_db)):
     try:
         logger.info(f"🔐 Login attempt: {request.email}")
         
-        # ✅ Find user by email
         user = db.query(User).filter(User.email == request.email).first()
-        
         if not user:
-            logger.warning(f"❌ User not found: {request.email}")
-            raise HTTPException(
-                status_code=401,
-                detail="Invalid email or password"
-            )
+            raise HTTPException(status_code=401, detail="Invalid email or password")
         
-        # ✅ Verify password
-        if not verify_password(request.password, user.hashed_password):
-            logger.warning(f"❌ Invalid password for: {request.email}")
-            raise HTTPException(
-                status_code=401,
-                detail="Invalid email or password"
-            )
+        # ✅ Added the same safety extraction used in registration
+        raw_pw = request.password.get_secret_value() if hasattr(request.password, 'get_secret_value') else str(request.password)
+        clean_password = raw_pw.strip()[:72]
         
-        # ✅ Check if user is active
+        # ✅ Use the clean_password to verify
+        if not verify_password(clean_password, user.hashed_password):
+            raise HTTPException(status_code=401, detail="Invalid email or password")
+        
         if not user.is_active:
-            logger.warning(f"❌ User inactive: {request.email}")
-            raise HTTPException(
-                status_code=403,
-                detail="User account is inactive"
-            )
+            raise HTTPException(status_code=403, detail="User account is inactive")
         
-        logger.info(f"✅ Login successful: {user.email}")
-        
-        # ✅ Generate tokens
         access_token = create_access_token(data={"sub": str(user.id)})
         refresh_token = create_refresh_token(data={"sub": str(user.id)})
         
@@ -127,6 +113,7 @@ def login(request: LoginSchema, db: Session = Depends(get_db)):
             "refresh_token": refresh_token,
             "token_type": "bearer"
         }
+    # ... keep your existing exception blocks ...
         
     except HTTPException as e:
         raise e
