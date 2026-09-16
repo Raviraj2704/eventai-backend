@@ -83,28 +83,28 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=allowed_origins,
     allow_credentials=True,
-    allow_methods=["*"],  # Updated to allow all methods
+    allow_methods=["*"],  # Allow all HTTP methods
     allow_headers=["*"],
     expose_headers=["*"],
-    max_age=3600  # Updated to 1 hour cache
+    max_age=3600  # Cache preflight requests for 1 hour
 )
 
 # ============================================================================
 # IMPORT ROUTERS (AFTER MIDDLEWARE)
 # ============================================================================
 
-# 1. Import all your route files
+# Import all 17 route files (includes analytics)
 from app.routes import (
     auth, sessions, speakers, resources, badges, 
     challenges, leaderboard, learning_paths, ratings,
-    social, announcements, engagement, partners, users, admin
+    social, announcements, engagement, partners, users, admin, analytics
 )
 
 # ============================================================================
-# INCLUDE ROUTERS
+# INCLUDE ROUTERS (MUST HAVE router = APIRouter() IN EACH FILE)
 # ============================================================================
 
-# 2. Register all routers WITH the correct API prefix!
+# Register all routers WITH the correct API prefix
 app.include_router(auth.router, prefix="/api/v1/auth", tags=["Auth"])
 app.include_router(sessions.router, prefix="/api/v1/sessions", tags=["Sessions"])
 app.include_router(speakers.router, prefix="/api/v1/speakers", tags=["Speakers"])
@@ -120,24 +120,19 @@ app.include_router(engagement.router, prefix="/api/v1/engagement", tags=["Engage
 app.include_router(partners.router, prefix="/api/v1/partners", tags=["Partners"])
 app.include_router(users.router, prefix="/api/v1/users", tags=["Users"])
 app.include_router(admin.router, prefix="/api/v1/admin", tags=["Admin"])
+app.include_router(analytics.router, prefix="/api/v1/analytics", tags=["Analytics"])
 
 # ============================================================================
-# ENDPOINTS (Merged existing health check + new events endpoints)
+# HEALTH CHECK ENDPOINTS
 # ============================================================================
 
 @app.get("/")
 async def root():
+    """Root endpoint"""
     return {
         "message": "✅ EventAI API is running",
         "version": "1.0.0",
         "status": "active"
-    }
-
-@app.get("/api/v1/health")
-async def health_check_v1():
-    return {
-        "status": "healthy",
-        "api": "EventAI v1.0.0"
     }
 
 @app.get("/health")
@@ -148,6 +143,18 @@ async def health_check():
         "app": os.getenv("APP_NAME", "EventAI"),
         "version": os.getenv("APP_VERSION", "1.0.0")
     }
+
+@app.get("/api/v1/health")
+async def health_check_v1():
+    """Health check endpoint v1"""
+    return {
+        "status": "healthy",
+        "api": "EventAI v1.0.0"
+    }
+
+# ============================================================================
+# GENERIC API ENDPOINTS (for testing)
+# ============================================================================
 
 @app.get("/api/events")
 async def get_events():
@@ -166,12 +173,13 @@ async def create_event(event_data: dict):
     }
 
 # ============================================================================
-# INFO LOGS
+# LOGGING & INFO
 # ============================================================================
 
 logger.info("✅ EventAI Backend initialized")
-logger.info(f"📍 Running on: {settings.DATABASE_URL[:50]}...")
+logger.info(f"📍 Database: {settings.DATABASE_URL[:50]}...")
 logger.info(f"🔐 CORS enabled for: {len(allowed_origins)} origins")
+logger.info(f"🛣️  Routes loaded: 16 route files + health endpoints")
 
 # ============================================================================
 # STARTUP EXECUTION
