@@ -99,27 +99,26 @@ from app.routes import (
     challenges, leaderboard, learning_paths, ratings,
     social, announcements, engagement, partners, users, admin, analytics
 )
-
 # ============================================================================
-# INCLUDE ROUTERS (Double prefixes removed)
+# INCLUDE ROUTERS
 # ============================================================================
 
-app.include_router(auth.router)
-app.include_router(users.router)
-app.include_router(sessions.router)
-app.include_router(speakers.router)
-app.include_router(resources.router)
-app.include_router(ratings.router)
-app.include_router(announcements.router)
-app.include_router(social.router)
-app.include_router(badges.router)
-app.include_router(challenges.router)
-app.include_router(learning_paths.router)
-app.include_router(partners.router)
-app.include_router(leaderboard.router)
-app.include_router(engagement.router)
-app.include_router(admin.router)
-app.include_router(analytics.router)
+app.include_router(auth.router, prefix="/api/v1/auth", tags=["Auth"])
+app.include_router(users.router, prefix="/api/v1/users", tags=["Users"])
+app.include_router(sessions.router, prefix="/api/v1/sessions", tags=["Sessions"])
+app.include_router(speakers.router, prefix="/api/v1/speakers", tags=["Speakers"])
+app.include_router(resources.router, prefix="/api/v1/resources", tags=["Resources"])
+app.include_router(ratings.router, prefix="/api/v1/ratings", tags=["Ratings"])
+app.include_router(announcements.router, prefix="/api/v1/announcements", tags=["Announcements"])
+app.include_router(social.router, prefix="/api/v1/social", tags=["Social"])
+app.include_router(badges.router, prefix="/api/v1/badges", tags=["Badges"])
+app.include_router(challenges.router, prefix="/api/v1/challenges", tags=["Challenges"])
+app.include_router(leaderboard.router, prefix="/api/v1/leaderboard", tags=["Leaderboard"])
+app.include_router(learning_paths.router, prefix="/api/v1/learning_paths", tags=["Learning Paths"])
+app.include_router(engagement.router, prefix="/api/v1/engagement", tags=["Engagement"])
+app.include_router(partners.router, prefix="/api/v1/partners", tags=["Partners"])
+app.include_router(admin.router, prefix="/api/v1/admin", tags=["Admin"])
+app.include_router(analytics.router, prefix="/api/v1/analytics", tags=["Analytics"])
 
 # ============================================================================
 # HEALTH CHECK ENDPOINTS
