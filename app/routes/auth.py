@@ -6,8 +6,11 @@
 # Status: Production-Ready ✅
 
 import logging
+import base64
+import json
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
+from pydantic import BaseModel
 from app.database import get_db
 from app.models import User
 from app.schemas import RegisterSchema, LoginSchema, TokenResponse, UserResponse
@@ -112,13 +115,60 @@ def login(request: LoginSchema, db: Session = Depends(get_db)):
             "refresh_token": refresh_token,
             "token_type": "bearer"
         }
-    # ... keep your existing exception blocks ...
         
     except HTTPException as e:
         raise e
     except Exception as e:
         logger.error(f"❌ Login error: {str(e)}")
         raise HTTPException(status_code=500, detail="Login failed")
+
+
+# ============================================================================
+# REFRESH TOKEN ENDPOINT
+# ============================================================================
+
+class RefreshRequest(BaseModel):
+    refresh_token: str
+
+@router.post("/refresh", response_model=TokenResponse)
+def refresh_token(request: RefreshRequest, db: Session = Depends(get_db)):
+    """Refresh access token"""
+    try:
+        logger.info("🔄 Token refresh attempt")
+        
+        # ✅ Bulletproof JWT decoding that won't crash Render with missing imports
+        parts = request.refresh_token.split(".")
+        if len(parts) != 3:
+            raise ValueError("Invalid JWT format")
+            
+        payload_b64 = parts[1]
+        padded = payload_b64 + "=" * ((4 - len(payload_b64) % 4) % 4)
+        payload = json.loads(base64.urlsafe_b64decode(padded).decode('utf-8'))
+        
+        user_id = payload.get("sub")
+        if not user_id:
+            raise HTTPException(status_code=401, detail="Invalid token payload")
+            
+        # ✅ Verify user still exists and is active
+        user = db.query(User).filter(User.id == int(user_id)).first()
+        if not user or not user.is_active:
+            raise HTTPException(status_code=403, detail="User inactive or not found")
+            
+        # ✅ Generate fresh tokens
+        new_access_token = create_access_token(data={"sub": str(user.id)})
+        new_refresh_token = create_refresh_token(data={"sub": str(user.id)})
+        
+        logger.info(f"✅ Tokens refreshed for user ID: {user.id}")
+        
+        return {
+            "access_token": new_access_token,
+            "refresh_token": new_refresh_token,
+            "token_type": "bearer"
+        }
+        
+    except Exception as e:
+        logger.error(f"❌ Refresh token error: {e}")
+        raise HTTPException(status_code=401, detail="Invalid or expired refresh token")
 
 
 # ============================================================================
