@@ -33,6 +33,7 @@ router = APIRouter(tags=["Sessions"])
 class QuickSessionCreate(BaseModel):
     title: str
     description: str
+    session_type: str  # <-- Add this exact line
     start_time: datetime
     end_time: datetime
     location: str
