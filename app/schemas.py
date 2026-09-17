@@ -6,7 +6,7 @@
 # Status: PRODUCTION READY ✅
 
 from pydantic import BaseModel, EmailStr, Field
-from typing import Optional, List
+from typing import Any, Optional, List
 from datetime import datetime
 
 # ============================================================================
@@ -446,6 +446,7 @@ class ChallengeResponse(BaseModel):
     points_reward: int = 20
     completion_count: int = 0
     created_at: datetime
+    user_participation_status: Optional[Any] = None
     class Config:
         from_attributes = True
 
