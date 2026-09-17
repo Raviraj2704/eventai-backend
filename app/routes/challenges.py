@@ -36,6 +36,8 @@ class QuickChallengeCreate(BaseModel):
     points_reward: int
     duration_days: int = 7
     objectives: str  # <-- Add this exact line
+    start_date: datetime  # <-- Add this
+    end_date: datetime    # <-- Add this
 
 # ============================================================================
 # CREATE A NEW CHALLENGE
