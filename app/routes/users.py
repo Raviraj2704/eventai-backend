@@ -78,6 +78,27 @@ def get_current_user(
             detail="Invalid authentication credentials"
         )
 
+# ============================================================================
+# GET ALL USERS (LIST)
+# ============================================================================
+
+@router.get("", response_model=list[UserProfileResponse])
+@router.get("/", response_model=list[UserProfileResponse])
+async def get_users(
+    limit: int = 50,
+    skip: int = 0,
+    db: Session = Depends(get_db)
+):
+    """Get list of active users"""
+    try:
+        users = db.query(User).filter(User.is_active == True).offset(skip).limit(limit).all()
+        return [UserProfileResponse.from_attributes(u) for u in users]
+    except Exception as e:
+        logger.error(f"Get users error: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to fetch users"
+        )
 
 # ============================================================================
 # GET CURRENT USER PROFILE
