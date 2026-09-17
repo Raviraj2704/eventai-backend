@@ -34,6 +34,7 @@ class QuickChallengeCreate(BaseModel):
     description: str
     difficulty: str
     points_reward: int
+    duration_days: int
 
 # ============================================================================
 # CREATE A NEW CHALLENGE
