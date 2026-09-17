@@ -92,7 +92,7 @@ async def get_users(
     """Get list of active users"""
     try:
         users = db.query(User).filter(User.is_active == True).offset(skip).limit(limit).all()
-        return [UserProfileResponse.from_attributes(u) for u in users]
+        return [UserProfileResponse.model_validate(u) for u in users]
     except Exception as e:
         logger.error(f"Get users error: {e}")
         raise HTTPException(
