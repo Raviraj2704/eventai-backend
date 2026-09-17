@@ -33,7 +33,6 @@ router = APIRouter(tags=["Sessions"])
 class QuickSessionCreate(BaseModel):
     title: str
     description: str
-    speaker_id: int
     start_time: datetime
     end_time: datetime
     location: str
