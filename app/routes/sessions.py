@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import and_, or_
 from datetime import datetime
 from typing import Optional
+from pydantic import BaseModel
 import logging
 
 from app.database import get_db
@@ -28,6 +29,32 @@ from app.routes.users import get_current_user
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["Sessions"])
 
+# Create a quick schema to accept the incoming data
+class QuickSessionCreate(BaseModel):
+    title: str
+    description: str
+    speaker_id: int
+    start_time: datetime
+    end_time: datetime
+    location: str
+    capacity: int
+
+# ============================================================================
+# CREATE A NEW SESSION
+# ============================================================================
+@router.post("", response_model=dict)
+@router.post("/", response_model=dict)
+def create_session(session_in: QuickSessionCreate, db: Session = Depends(get_db)):
+    """Create a new event session"""
+    try:
+        # Note: SessionModel is used here based on your import on line 17
+        new_session = SessionModel(**session_in.model_dump())
+        db.add(new_session)
+        db.commit()
+        return {"message": "Session successfully created!"}
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
 
 # ============================================================================
 # GET ALL SESSIONS
