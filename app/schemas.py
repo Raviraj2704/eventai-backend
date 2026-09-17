@@ -446,7 +446,7 @@ class ChallengeResponse(BaseModel):
     points_reward: int = 20
     completion_count: int = 0
     created_at: datetime
-    user_participation_status: Optional[Any] = None
+    user_participation: Optional[Any] = None
     class Config:
         from_attributes = True
 
