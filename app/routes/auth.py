@@ -98,7 +98,7 @@ def login(request: LoginSchema, db: Session = Depends(get_db)):
         clean_password = raw_pw.strip()[:72]
         
         # ✅ Use the clean_password to verify
-        if not verify_password(clean_password, user.hashed_password):
+        if not verify_password(clean_password, user.password_hash):
             raise HTTPException(status_code=401, detail="Invalid email or password")
         
         if not user.is_active:
