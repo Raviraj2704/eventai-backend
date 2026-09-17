@@ -242,10 +242,10 @@ async def get_challenge_by_id(
 )
 async def join_challenge(
     challenge_id: int,
-    request: ChallengeJoinRequest,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
+    
     """
     Join a challenge
     
