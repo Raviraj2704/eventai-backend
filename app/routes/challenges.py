@@ -22,10 +22,35 @@ from app.schemas import (
 )
 from app.routes.users import get_current_user
 from app.utils.email import send_badge_earned_email
+from pydantic import BaseModel
 
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["Challengers"])
+
+# Create a quick schema to accept the incoming challenge data
+class QuickChallengeCreate(BaseModel):
+    title: str
+    description: str
+    difficulty: str
+    points_reward: int
+
+# ============================================================================
+# CREATE A NEW CHALLENGE
+# ============================================================================
+@router.post("", response_model=dict)
+@router.post("/", response_model=dict)
+def create_challenge(challenge_in: QuickChallengeCreate, db: Session = Depends(get_db)):
+    """Create a new challenge"""
+    try:
+        # Assuming your SQLAlchemy model is imported as 'Challenge'
+        new_challenge = Challenge(**challenge_in.model_dump())
+        db.add(new_challenge)
+        db.commit()
+        return {"message": "Challenge successfully created!"}
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 # ============================================================================
