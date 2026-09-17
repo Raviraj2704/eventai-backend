@@ -19,10 +19,8 @@ from app.schemas import (
 )
 from app.routes.users import get_current_user
 
-
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["Leaderboard"])
-
 
 # ============================================================================
 # GET LEADERBOARD
@@ -69,11 +67,29 @@ async def get_leaderboard(
         # Pagination
         leaderboard_entries = query.offset((page - 1) * limit).limit(limit).all()
         
-        # Format response with rank
+        # Format response with user details and rank
         leaderboard_data = []
         for idx, entry in enumerate(leaderboard_entries, start=(page - 1) * limit + 1):
-            entry.rank = idx
-            leaderboard_data.append(LeaderboardUserResponse.model_validate(entry))
+            user = db.query(User).filter(User.id == entry.user_id).first()
+            user_dict = {
+                "id": entry.id,
+                "user_id": entry.user_id,
+                "username": getattr(user, "username", None) or f"user_{entry.user_id}",
+                "first_name": getattr(user, "first_name", "") or "",
+                "last_name": getattr(user, "last_name", "") or "",
+                "total_points": entry.total_points,
+                "rank": idx,
+                "tier": entry.tier,
+                "challenges_completed": getattr(entry, "challenges_completed", 0) or 0,
+                "sessions_attended": getattr(entry, "sessions_attended", 0) or 0,
+                "sessions_rated": getattr(entry, "sessions_rated", 0) or 0,
+                "posts_created": getattr(entry, "posts_created", 0) or 0,
+                "last_activity": getattr(entry, "last_activity", None)
+            }
+            try:
+                leaderboard_data.append(LeaderboardUserResponse.model_validate(user_dict))
+            except Exception:
+                leaderboard_data.append(user_dict)
         
         return {
             "total": total,
@@ -199,15 +215,6 @@ async def get_leaderboard_by_tier(
 ):
     """
     Get leaderboard filtered by tier
-    
-    Args:
-        tier_name: Tier name (bronze/silver/gold/platinum/diamond)
-        page: Page number
-        limit: Results per page
-        db: Database session
-    
-    Returns:
-        dict: Tier leaderboard
     """
     try:
         valid_tiers = ["bronze", "silver", "gold", "platinum", "diamond"]
@@ -225,10 +232,28 @@ async def get_leaderboard_by_tier(
         total = query.count()
         leaderboard_entries = query.offset((page - 1) * limit).limit(limit).all()
         
-        leaderboard_data = [
-            LeaderboardUserResponse.model_validate(entry)
-            for entry in leaderboard_entries
-        ]
+        leaderboard_data = []
+        for idx, entry in enumerate(leaderboard_entries, start=(page - 1) * limit + 1):
+            user = db.query(User).filter(User.id == entry.user_id).first()
+            user_dict = {
+                "id": entry.id,
+                "user_id": entry.user_id,
+                "username": getattr(user, "username", None) or f"user_{entry.user_id}",
+                "first_name": getattr(user, "first_name", "") or "",
+                "last_name": getattr(user, "last_name", "") or "",
+                "total_points": entry.total_points,
+                "rank": idx,
+                "tier": entry.tier,
+                "challenges_completed": getattr(entry, "challenges_completed", 0) or 0,
+                "sessions_attended": getattr(entry, "sessions_attended", 0) or 0,
+                "sessions_rated": getattr(entry, "sessions_rated", 0) or 0,
+                "posts_created": getattr(entry, "posts_created", 0) or 0,
+                "last_activity": getattr(entry, "last_activity", None)
+            }
+            try:
+                leaderboard_data.append(LeaderboardUserResponse.model_validate(user_dict))
+            except Exception:
+                leaderboard_data.append(user_dict)
         
         return {
             "tier": tier_name.lower(),
@@ -266,13 +291,6 @@ async def get_nearby_leaderboard(
 ):
     """
     Get leaderboard with user in center
-    
-    Args:
-        current_user: Authenticated user
-        db: Database session
-    
-    Returns:
-        dict: Nearby users
     """
     try:
         # Get user's leaderboard entry
@@ -296,10 +314,28 @@ async def get_nearby_leaderboard(
             Leaderboard.total_points.desc()
         ).offset(max(0, rank - 3)).limit(5).all()
         
-        nearby_data = [
-            LeaderboardUserResponse.model_validate(entry)
-            for entry in nearby
-        ]
+        nearby_data = []
+        for idx, entry in enumerate(nearby, start=max(1, rank - 2)):
+            user = db.query(User).filter(User.id == entry.user_id).first()
+            user_dict = {
+                "id": entry.id,
+                "user_id": entry.user_id,
+                "username": getattr(user, "username", None) or f"user_{entry.user_id}",
+                "first_name": getattr(user, "first_name", "") or "",
+                "last_name": getattr(user, "last_name", "") or "",
+                "total_points": entry.total_points,
+                "rank": idx,
+                "tier": entry.tier,
+                "challenges_completed": getattr(entry, "challenges_completed", 0) or 0,
+                "sessions_attended": getattr(entry, "sessions_attended", 0) or 0,
+                "sessions_rated": getattr(entry, "sessions_rated", 0) or 0,
+                "posts_created": getattr(entry, "posts_created", 0) or 0,
+                "last_activity": getattr(entry, "last_activity", None)
+            }
+            try:
+                nearby_data.append(LeaderboardUserResponse.model_validate(user_dict))
+            except Exception:
+                nearby_data.append(user_dict)
         
         return {
             "your_rank": rank,
