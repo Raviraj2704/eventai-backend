@@ -85,6 +85,8 @@ app.add_middleware(
         "http://127.0.0.1:3000",
         "http://localhost:5173",
         "http://127.0.0.1:5173",
+        "https://event-ai-frontend.vercel.app",  # Add your Vercel domain
+        "https://EVENT-AI-FRONTEND.vercel.app",
         "https://event-ai-psi.vercel.app",
         "https://frontend-livid-two-96gqet7oy4.vercel.app",
         "https://event-ai-backend-o2f3.onrender.com/api/v1"
