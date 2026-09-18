@@ -80,17 +80,25 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=allowed_origins,
+    allow_origins=[
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+        "https://event-ai-psi.vercel.app",
+        "https://frontend-livid-two-96gqet7oy4.vercel.app",
+        "https://event-ai-backend-o2f3.onrender.com"
+    ],
     allow_credentials=True,
-    allow_methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS", "*"],
     allow_headers=[
         "Content-Type",
         "Authorization",
         "X-Request-ID",
         "X-Client-Version",
+        "*"
     ],
     expose_headers=["Content-Length", "Content-Range"],
-    max_age=3600  # Cache preflight requests for 1 hour
 )
 
 # ============================================================================
