@@ -74,34 +74,42 @@ app = FastAPI(
     lifespan=lifespan
 )
 
-# ============================================================================
-# CORS MIDDLEWARE (MUST BE FIRST)
-# ============================================================================
+# ================================================
+# CORS MIDDLEWARE CONFIGURATION (MUST BE FIRST)
+# ================================================
 
+# Get allowed origins from environment variable
+allowed_origins_str = os.getenv(
+    "ALLOWED_ORIGINS",
+    "http://localhost:5173,http://localhost:3000"
+)
+allowed_origins = [origin.strip() for origin in allowed_origins_str.split(",")]
+
+print("=" * 80)
+print("🔐 CORS CONFIGURATION")
+print("=" * 80)
+print(f"Allowed Origins: {allowed_origins}")
+print("=" * 80)
+
+# Add CORS middleware (MUST BE BEFORE OTHER MIDDLEWARE)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:3000",
-        "http://127.0.0.1:3000",
-        "http://localhost:5173",
-        "http://127.0.0.1:5173",
-        "https://event-ai-frontend.vercel.app",  # Add your Vercel domain
-        "https://EVENT-AI-FRONTEND.vercel.app",
-        "https://event-ai-psi.vercel.app",
-        "https://frontend-livid-two-96gqet7oy4.vercel.app",
-        "https://event-ai-backend-o2f3.onrender.com/api/v1"
-    ],
+    allow_origins=allowed_origins,  # Use environment variable
     allow_credentials=True,
-    allow_methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS", "*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
     allow_headers=[
         "Content-Type",
         "Authorization",
         "X-Request-ID",
         "X-Client-Version",
-        "*"
+        "Accept",
+        "Origin",
     ],
-    expose_headers=["Content-Length", "Content-Range"],
+    expose_headers=["Content-Length", "Content-Range", "X-Request-ID"],
+    max_age=86400,  # 24 hours
 )
+
+
 
 # ============================================================================
 # IMPORT ROUTERS (AFTER MIDDLEWARE)
