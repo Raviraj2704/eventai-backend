@@ -81,7 +81,8 @@ app = FastAPI(
 # Get allowed origins from environment variable
 allowed_origins_str = os.getenv(
     "ALLOWED_ORIGINS",
-    "http://localhost:5173,http://localhost:3000"
+    "http://localhost:5173,http://localhost:3000,"
+    "https://frontend-livid-two-96gqet7oy4.vercel.app"
 )
 allowed_origins = [origin.strip() for origin in allowed_origins_str.split(",")]
 
