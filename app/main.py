@@ -87,7 +87,7 @@ app.add_middleware(
         "http://127.0.0.1:5173",
         "https://event-ai-psi.vercel.app",
         "https://frontend-livid-two-96gqet7oy4.vercel.app",
-        "https://event-ai-backend-o2f3.onrender.com"
+        "https://event-ai-backend-o2f3.onrender.com/api/v1"
     ],
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS", "*"],
