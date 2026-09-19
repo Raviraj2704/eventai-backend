@@ -248,6 +248,7 @@ class User(Base):
         cascade="all, delete-orphan"
     )
     
+    
     # Indexes
     __table_args__ = (
         Index('idx_user_email_active', 'email', 'is_active'),
