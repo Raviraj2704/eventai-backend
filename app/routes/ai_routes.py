@@ -18,7 +18,7 @@ from app.models import (
     User as UserModel, Challenge, Resource
 )
 from app.schemas import UserResponse
-from app.auth import get_current_user
+from app.routes.auth import get_current_user
 
 logger = logging.getLogger(__name__)
 
