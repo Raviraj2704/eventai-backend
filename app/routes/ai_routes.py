@@ -57,14 +57,14 @@ async def get_ai_recommendations(
     try:
         # Get user's session attendance & ratings
         user_attended = db.query(SessionAttendance).filter(
-            SessionAttendance.user_id == current_user.id,
+            SessionAttendance.user_id == current_user.get("id"),
             SessionAttendance.attended == True
         ).all()
         attended_session_ids = [a.session_id for a in user_attended]
 
         # Get user ratings to understand interests
         user_ratings = db.query(Rating).filter(
-            Rating.user_id == current_user.id
+            Rating.user_id == current_user.get("id")
         ).all()
         avg_rating = sum(r.rating for r in user_ratings) / len(user_ratings) if user_ratings else 0
 
@@ -187,7 +187,7 @@ async def ai_chat(
 
         # Get user context for personalization
         user_attended = db.query(SessionModel).join(SessionAttendance).filter(
-            SessionAttendance.user_id == current_user.id,
+            SessionAttendance.user_id == current_user.get("id"),
             SessionAttendance.attended == True
         ).limit(5).all()
         attended_titles = [s.title for s in user_attended]
@@ -196,9 +196,9 @@ async def ai_chat(
         system_prompt = f"""You are EventAI Assistant, a helpful AI for event management and networking.
         
 User Context:
-- Name: {current_user.full_name}
-- Attended Sessions: {', '.join(attended_titles) if attended_titles else 'None yet'}
-- Email: {current_user.email}
+- Name: {current_user.get("full_name")}
+- Attended Sessions: {', '.join(attended_titles) if attended_titles else 'None yet'}``
+- Email: {current_user.get("email")}
 
 Instructions:
 1. Be concise (max 100 words for chat)
@@ -244,7 +244,7 @@ Respond naturally and helpfully. If you need to suggest something, suggest REAL 
                 "metadata": {
                     "category": context,
                     "timestamp": datetime.utcnow().isoformat(),
-                    "user_id": current_user.id,
+                    "user_id": current_user.get("id"),
                     "model": GROQ_MODEL
                 }
             }
@@ -290,7 +290,7 @@ async def get_session_summary(
 
         # Verify user attended (or is admin)
         attendance = db.query(SessionAttendance).filter(
-            SessionAttendance.user_id == current_user.id,
+            SessionAttendance.user_id == current_user.get("id"),
             SessionAttendance.session_id == session_id,
             SessionAttendance.attended == True
         ).first()
