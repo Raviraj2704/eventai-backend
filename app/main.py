@@ -11,6 +11,7 @@ from contextlib import asynccontextmanager
 
 from app.database import init_db
 from app.config import settings
+from app.routes.auth import get_current_user
 
 # Load environment variables
 load_dotenv()
@@ -116,11 +117,11 @@ app.add_middleware(
 # IMPORT ROUTERS (AFTER MIDDLEWARE)
 # ============================================================================
 
-# Import all 18 route files (includes analytics and AI routes)
+# Import all 19 route files (includes analytics and AI routes)
 from app.routes import (
     auth, sessions, speakers, resources, badges, 
     challenges, leaderboard, learning_paths, ratings,
-    social, announcements, engagement, partners, users, admin, analytics, ai_routes
+    social, announcements, engagement, partners, users, admin, analytics, ai_routes, admin
 )
 # ============================================================================
 # INCLUDE ROUTERS
@@ -143,6 +144,7 @@ app.include_router(partners.router, prefix="/api/v1/partners", tags=["Partners"]
 app.include_router(admin.router, prefix="/api/v1/admin", tags=["Admin"])
 app.include_router(analytics.router, prefix="/api/v1/analytics", tags=["Analytics"])
 app.include_router(ai_routes.router, prefix="/api/v1/ai", tags=["AI Features"])
+app.include_router(admin.router, prefix="/api/v1/admin", tags=["Admin"])
 
 # ============================================================================
 # HEALTH CHECK ENDPOINTS
@@ -201,7 +203,7 @@ async def create_event(event_data: dict):
 logger.info("✅ EventAI Backend initialized")
 logger.info(f"📍 Database: {settings.DATABASE_URL[:50]}...")
 logger.info(f"🔐 CORS enabled for: {len(allowed_origins)} origins")
-logger.info(f"🛣️  Routes loaded: 18 route files + health endpoints")
+logger.info(f"🛣️  Routes loaded: 19 route files + health endpoints")
 
 # ============================================================================
 # STARTUP EXECUTION
