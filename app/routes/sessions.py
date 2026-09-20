@@ -78,7 +78,6 @@ def create_session(
             max_attendees=session.max_attendees or 100,
             category=session.category or "workshop",
             is_published=True,
-            actual_attendees=0
         )
 
         db.add(new_session)
