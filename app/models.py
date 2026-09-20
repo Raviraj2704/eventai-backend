@@ -366,40 +366,17 @@ class Session(Base):
         updated_at: Last update timestamp
     """
     __tablename__ = "sessions"
-    
-    # Primary Key
-    id = Column(Integer, primary_key=True, index=True)
-    
-    # Basic Info
+
+    id = Column(Integer, primary_key=True)
     title = Column(String(255), nullable=False)
-    description = Column(Text)
-    session_type = Column(SQLEnum(SessionType), nullable=False)
-    category = Column(String(50))
-    
-    # Time & Location
-    start_time = Column(DateTime, nullable=False, index=True)
+    description = Column(Text, nullable=False)
+    speaker_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    start_time = Column(DateTime, nullable=False)
     end_time = Column(DateTime, nullable=False)
-    location = Column(String(100))
-    duration_minutes = Column(Integer)
-    
-    # Capacity
-    capacity = Column(Integer)  # NULL = unlimited
-    actual_attendees = Column(Integer, default=0)
-    
-    # Content
-    difficulty_level = Column(SQLEnum(DifficultyLevel))
-    prerequisites = Column(Text)
-    learning_outcomes = Column(Text)
-    resource_links = Column(JSON)  # Array of URLs
-    
-    # Status
-    is_published = Column(Boolean, default=False, index=True)
-    
-    # Ratings
-    average_rating = Column(Float, default=0.0)
-    total_ratings = Column(Integer, default=0)
-    
-    # Timestamps
+    location = Column(String(255), nullable=True)
+    category = Column(String(50), nullable=True)
+    max_attendees = Column(Integer, default=100)
+    status = Column(String(20), default="pending")
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     

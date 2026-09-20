@@ -36,12 +36,12 @@ router = APIRouter(tags=["Sessions"])
 class SessionCreateSchema(BaseModel):
     title: str
     description: str
-    session_type: str
     start_time: datetime
     end_time: datetime
-    location: str
-    capacity: int
-    category: Optional[str] = None
+    location: Optional[str] = None
+    category: Optional[str] = "workshop"
+    max_attendees: Optional[int] = 100
+    session_type: Optional[str] = "workshop"
 
 class SessionUpdateSchema(BaseModel):
     title: Optional[str] = None
@@ -70,17 +70,17 @@ def create_session(
 
    try:
         new_session = SessionModel(
-            title=session.title,
-            description=session.description,
-            session_type=session.session_type,
-            start_time=session.start_time,
-            end_time=session.end_time,
-            location=session.location,
-            capacity=session.capacity,
-            category=session.category,
-            is_published=True,
-            actual_attendees=0
-        )
+    title=session.title,
+    description=session.description,
+    session_type=session.session_type or "workshop",
+    start_time=session.start_time,
+    end_time=session.end_time,
+    location=session.location,
+    capacity=session.max_attendees or 100,
+    category=session.category or "workshop",
+    is_published=True,
+    actual_attendees=0
+)
         db.add(new_session)
         db.commit()
         db.refresh(new_session)
