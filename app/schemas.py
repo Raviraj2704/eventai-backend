@@ -104,6 +104,7 @@ class SessionResponse(BaseModel):
     end_time: datetime
     location: Optional[str] = None
     max_attendees: Optional[int] = None
+    is_attended_by_user: Optional[bool] = False
     created_at: datetime
     class Config:
         from_attributes = True
