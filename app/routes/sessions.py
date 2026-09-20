@@ -73,7 +73,6 @@ def create_session(
             title=session.title,
             description=session.description,
             session_type=session.session_type,
-            speaker_id=user_id,
             start_time=session.start_time,
             end_time=session.end_time,
             location=session.location,
