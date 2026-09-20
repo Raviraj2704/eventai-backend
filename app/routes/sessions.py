@@ -59,21 +59,28 @@ def create_session(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Only speakers can create sessions"""
-    if current_user.role != 'speaker':
-        raise HTTPException(status_code=403, detail="Only speakers can create sessions")
-    
+   """Only speakers or admins can create sessions"""
+    # Safe checks that work whether current_user is a dict or an ORM object
+    user_role = getattr(current_user, "role", None) or (current_user.get("role") if isinstance(current_user, dict) else None)
+    is_admin = getattr(current_user, "is_admin", False) or (current_user.get("is_admin", False) if isinstance(current_user, dict) else False)
+    user_id = getattr(current_user, "id", None) or (current_user.get("id") if isinstance(current_user, dict) else None)
+
+    if user_role not in ["speaker", "admin"] and not is_admin:
+        raise HTTPException(status_code=403, detail="Not authorized to create sessions")
+
     try:
         new_session = SessionModel(
             title=session.title,
             description=session.description,
             session_type=session.session_type,
-            speaker_id=current_user.id,
+            speaker_id=user_id,
             start_time=session.start_time,
             end_time=session.end_time,
             location=session.location,
             capacity=session.capacity,
-            category=session.category
+            category=session.category,
+            is_published=True,
+            actual_attendees=0
         )
         db.add(new_session)
         db.commit()
@@ -82,7 +89,6 @@ def create_session(
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=500, detail=str(e))
-
 
 # ============================================================================
 # UPDATE A SESSION
