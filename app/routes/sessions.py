@@ -61,14 +61,14 @@ def create_session(
 ):
    """Only speakers or admins can create sessions"""
     # Safe checks that work whether current_user is a dict or an ORM object
-    user_role = getattr(current_user, "role", None) or (current_user.get("role") if isinstance(current_user, dict) else None)
-    is_admin = getattr(current_user, "is_admin", False) or (current_user.get("is_admin", False) if isinstance(current_user, dict) else False)
-    user_id = getattr(current_user, "id", None) or (current_user.get("id") if isinstance(current_user, dict) else None)
+   user_role = getattr(current_user, "role", None) or (current_user.get("role") if isinstance(current_user, dict) else None)
+   is_admin = getattr(current_user, "is_admin", False) or (current_user.get("is_admin", False) if isinstance(current_user, dict) else False)
+   user_id = getattr(current_user, "id", None) or (current_user.get("id") if isinstance(current_user, dict) else None)
 
-    if user_role not in ["speaker", "admin"] and not is_admin:
+   if user_role not in ["speaker", "admin"] and not is_admin:
         raise HTTPException(status_code=403, detail="Not authorized to create sessions")
 
-    try:
+   try:
         new_session = SessionModel(
             title=session.title,
             description=session.description,
@@ -86,7 +86,7 @@ def create_session(
         db.commit()
         db.refresh(new_session)
         return {"message": "Session successfully created!", "session_id": new_session.id}
-    except Exception as e:
+   except Exception as e:
         db.rollback()
         raise HTTPException(status_code=500, detail=str(e))
 
