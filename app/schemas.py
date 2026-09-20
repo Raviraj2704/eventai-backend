@@ -81,11 +81,11 @@ class AvatarUploadResponse(BaseModel):
 class SessionCreate(BaseModel):
     title: str
     description: Optional[str] = None
-    speaker_id: int
+    speaker_id: Optional[int] = None
     start_time: datetime
     end_time: datetime
     location: Optional[str] = None
-    capacity: int = 100
+    max_attendees: Optional[int] = 100
 
 class SessionUpdate(BaseModel):
     title: Optional[str] = None
@@ -93,17 +93,17 @@ class SessionUpdate(BaseModel):
     start_time: Optional[datetime] = None
     end_time: Optional[datetime] = None
     location: Optional[str] = None
-    capacity: Optional[int] = None
+    max_attendees: Optional[int] = None
 
 class SessionResponse(BaseModel):
     id: int
     title: str
     description: Optional[str] = None
-    speaker_id: int
+    speaker_id: Optional[int] = None
     start_time: datetime
     end_time: datetime
     location: Optional[str] = None
-    capacity: int
+    max_attendees: Optional[int] = None
     created_at: datetime
     class Config:
         from_attributes = True
@@ -112,11 +112,11 @@ class SessionDetailResponse(BaseModel):
     id: int
     title: str
     description: Optional[str] = None
-    speaker_id: int
+    speaker_id: Optional[int] = None
     start_time: Optional[datetime] = None
     end_time: Optional[datetime] = None
     location: Optional[str] = None
-    capacity: Optional[int] = None
+    max_attendees: Optional[int] = None
     attendee_count: int = 0
     class Config:
         from_attributes = True
@@ -197,7 +197,7 @@ class SpeakerRatingRequest(BaseModel):
 
 class SpeakerRatingResponse(BaseModel):
     id: int
-    speaker_id: int
+    speaker_id: Optional[int] = None
     score: int
     comment: Optional[str] = None
     created_at: datetime
