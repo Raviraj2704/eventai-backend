@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 # Initialize Groq client with API key from environment
 import os
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
-GROQ_MODEL = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
+GROQ_MODEL = os.getenv("GROQ_MODEL", "llama-3.1-70b-versatile")
 
 if not GROQ_API_KEY:
     raise RuntimeError("GROQ_API_KEY not set in environment variables")
@@ -737,7 +737,7 @@ async def submit_feedback(
 
         # In production, create AIFeedback model and store
         logger.info(
-            f"Feedback recorded - User: {current_user.id}, "
+            f"Feedback recorded - User: {current_user.get('id')}, "
             f"Message: {message_id}, Helpful: {helpful}, "
             f"Text: {feedback_text[:100]}"
         )
