@@ -9,10 +9,13 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from sqlalchemy import and_
 from datetime import datetime
+from typing import Optional
+from pydantic import BaseModel
 import logging
 
 from app.database import get_db
-from app.models import Rating, RatingType, Session as SessionModel, Speaker, Resource
+# Added User to the imports
+from app.models import Rating, RatingType, Session as SessionModel, Speaker, Resource, User
 from app.schemas import (
     RatingResponse, RatingDistribution, RatingDashboardResponse,
     ErrorResponse
@@ -22,6 +25,15 @@ from app.routes.users import get_current_user
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["Ratings"])
+
+# ============================================================================
+# SCHEMAS
+# ============================================================================
+
+class RatingCreateSchema(BaseModel):
+    session_id: int
+    score: int
+    review: Optional[str] = None
 
 
 # ============================================================================
@@ -218,4 +230,44 @@ async def get_ratings_by_type(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to fetch ratings"
+        )
+
+
+# ============================================================================
+# CREATE RATING/REVIEW
+# ============================================================================
+
+@router.post("", response_model=dict, status_code=status.HTTP_201_CREATED)
+@router.post("/", response_model=dict, status_code=status.HTTP_201_CREATED, include_in_schema=False)
+def create_rating(
+    rating: RatingCreateSchema,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Attendee rates a session"""
+    try:
+        new_rating = Rating(
+            session_id=rating.session_id,
+            target_id=rating.session_id,
+            user_id=current_user.id,
+            rating_type=RatingType.SESSION,
+            score=rating.score,  # 1-5
+            feedback=rating.review,  # Mapped from schema 'review'
+            created_at=datetime.utcnow()  # Mapped from schema 'timestamp' concept
+        )
+        db.add(new_rating)
+        db.commit()
+        db.refresh(new_rating)
+        
+        return {
+            "message": "Rating submitted successfully",
+            "rating_id": new_rating.id
+        }
+    
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Rating creation error: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to submit rating"
         )

@@ -23,15 +23,15 @@ router = APIRouter()
 
 def require_admin(current_user: User = Depends(get_current_user)):
     """Verify user is admin"""
-    if not current_user.is_admin:
+    if not current_user.get("is_admin"):
         raise HTTPException(status_code=403, detail="Admin access required")
     return current_user
 
 def require_role(required_roles: list):
     """Factory function to create role-based dependency"""
     async def verify_role(current_user: User = Depends(get_current_user)):
-        if current_user.role not in required_roles and not current_user.is_admin:
-            raise HTTPException(status_code=403, detail=f"Role {current_user.role} not authorized")
+        if current_user.get("role") not in required_roles and not current_user.get("is_admin"):
+            raise HTTPException(status_code=403, detail=f"Role {current_user.get('role')} not authorized")
         return current_user
     return verify_role
 
@@ -293,7 +293,7 @@ async def approve_session(
         session.is_approved = True
         db.commit()
 
-        logger.info(f"Session {session_id} approved by admin {current_user.id}")
+        logger.info(f"Session {session_id} approved by admin {current_user.get('id')}")
 
         return {
             "status": "success",
@@ -328,7 +328,7 @@ async def reject_session(
 
         db.commit()
 
-        logger.warning(f"Session {session_id} rejected by admin {current_user.id}. Reason: {reason}")
+        logger.warning(f"Session {session_id} rejected by admin {current_user.get('id')}. Reason: {reason}")
 
         return {
             "status": "success",
@@ -365,7 +365,7 @@ async def delete_session(
         db.delete(session)
         db.commit()
 
-        logger.warning(f"Session {session_id} deleted by admin {current_user.id}")
+        logger.warning(f"Session {session_id} deleted by admin {current_user.get('id')}")
 
         return {
             "status": "success",

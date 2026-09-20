@@ -29,32 +29,97 @@ from app.routes.users import get_current_user
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["Sessions"])
 
-# Create a quick schema to accept the incoming data
-class QuickSessionCreate(BaseModel):
+# ============================================================================
+# SCHEMAS
+# ============================================================================
+
+class SessionCreateSchema(BaseModel):
     title: str
     description: str
-    session_type: str  # <-- Add this exact line
+    session_type: str
     start_time: datetime
     end_time: datetime
     location: str
     capacity: int
+    category: Optional[str] = None
+
+class SessionUpdateSchema(BaseModel):
+    title: Optional[str] = None
+    description: Optional[str] = None
+
 
 # ============================================================================
 # CREATE A NEW SESSION
 # ============================================================================
+
 @router.post("", response_model=dict)
-@router.post("/", response_model=dict)
-def create_session(session_in: QuickSessionCreate, db: Session = Depends(get_db)):
-    """Create a new event session"""
+@router.post("/", response_model=dict, include_in_schema=False)
+def create_session(
+    session: SessionCreateSchema,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Only speakers can create sessions"""
+    if current_user.role != 'speaker':
+        raise HTTPException(status_code=403, detail="Only speakers can create sessions")
+    
     try:
-        # Note: SessionModel is used here based on your import on line 17
-        new_session = SessionModel(**session_in.model_dump())
+        new_session = SessionModel(
+            title=session.title,
+            description=session.description,
+            session_type=session.session_type,
+            speaker_id=current_user.id,
+            start_time=session.start_time,
+            end_time=session.end_time,
+            location=session.location,
+            capacity=session.capacity,
+            category=session.category
+        )
         db.add(new_session)
         db.commit()
-        return {"message": "Session successfully created!"}
+        db.refresh(new_session)
+        return {"message": "Session successfully created!", "session_id": new_session.id}
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============================================================================
+# UPDATE A SESSION
+# ============================================================================
+
+@router.put("/{session_id}", response_model=dict)
+def update_session(
+    session_id: int,
+    session: SessionUpdateSchema,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Only speaker who created can update"""
+    try:
+        db_session = db.query(SessionModel).filter(SessionModel.id == session_id).first()
+        
+        if not db_session:
+            raise HTTPException(status_code=404, detail="Session not found")
+            
+        if db_session.speaker_id != current_user.id:
+            raise HTTPException(status_code=403, detail="Can only update your own sessions")
+        
+        if session.title is not None:
+            db_session.title = session.title
+        if session.description is not None:
+            db_session.description = session.description
+            
+        db.commit()
+        db.refresh(db_session)
+        return {"message": "Session updated successfully"}
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 # ============================================================================
 # GET ALL SESSIONS

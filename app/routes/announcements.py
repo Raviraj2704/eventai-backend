@@ -10,14 +10,14 @@ from sqlalchemy.orm import Session
 from sqlalchemy import and_, or_
 from datetime import datetime
 from typing import Optional
+from pydantic import BaseModel
 import logging
 
 from app.database import get_db
 from app.models import Announcement, User
 from app.schemas import (
     AnnouncementResponse, AnnouncementDetailResponse,
-    AnnouncementCreateRequest, AnnouncementListRequest,
-    ErrorResponse
+    AnnouncementListRequest, ErrorResponse
 )
 from app.routes.users import get_current_user
 from app.utils.email import send_announcement_email
@@ -25,6 +25,28 @@ from app.utils.email import send_announcement_email
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["Announcements"])
+
+# ============================================================================
+# SCHEMAS
+# ============================================================================
+
+class AnnouncementCreateSchema(BaseModel):
+    title: str
+    content: str
+    announcement_type: str
+    category: Optional[str] = None
+    priority: str = "normal"
+    image_url: Optional[str] = None
+    expires_at: Optional[datetime] = None
+
+class AnnouncementUpdateSchema(BaseModel):
+    title: Optional[str] = None
+    content: Optional[str] = None
+    announcement_type: Optional[str] = None
+    category: Optional[str] = None
+    priority: Optional[str] = None
+    image_url: Optional[str] = None
+    expires_at: Optional[datetime] = None
 
 
 # ============================================================================
@@ -45,16 +67,6 @@ async def get_announcements(
 ):
     """
     Get all announcements with filtering and pagination
-    
-    Args:
-        page: Page number
-        limit: Results per page
-        announcement_type: Filter by type
-        priority: Filter by priority
-        db: Database session
-    
-    Returns:
-        dict: Paginated announcements list
     """
     try:
         query = db.query(Announcement).filter(Announcement.is_published == True)
@@ -125,16 +137,6 @@ async def get_announcement_by_id(
 ):
     """
     Get announcement by ID
-    
-    Args:
-        announcement_id: Announcement ID
-        db: Database session
-    
-    Returns:
-        AnnouncementDetailResponse: Announcement details
-    
-    Raises:
-        HTTPException: If announcement not found
     """
     try:
         announcement = db.query(Announcement).filter(
@@ -167,33 +169,15 @@ async def get_announcement_by_id(
 # CREATE ANNOUNCEMENT (ADMIN ONLY)
 # ============================================================================
 
-@router.post(
-    "",
-    response_model=AnnouncementResponse,
-    status_code=status.HTTP_201_CREATED,
-    responses={
-        401: {"model": ErrorResponse}, 
-        403: {"model": ErrorResponse}
-    }
-)
+@router.post("", response_model=AnnouncementResponse, status_code=status.HTTP_201_CREATED)
+@router.post("/", response_model=AnnouncementResponse, status_code=status.HTTP_201_CREATED, include_in_schema=False)
 async def create_announcement(
-    request: AnnouncementCreateRequest,
+    request: AnnouncementCreateSchema,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     """
     Create new announcement (admin only)
-    
-    Args:
-        request: Announcement data
-        current_user: Authenticated user (must be admin)
-        db: Database session
-    
-    Returns:
-        AnnouncementResponse: Created announcement
-    
-    Raises:
-        HTTPException: If not admin
     """
     try:
         # Check if admin
@@ -224,11 +208,14 @@ async def create_announcement(
         # Send email to all users (in production, use async task)
         all_users = db.query(User).filter(User.is_active == True).all()
         for user in all_users:
-            send_announcement_email(
-                user.email,
-                request.title,
-                request.content
-            )
+            try:
+                send_announcement_email(
+                    user.email,
+                    request.title,
+                    request.content
+                )
+            except Exception as e:
+                logger.warning(f"Failed to send email to {user.email}: {e}")
         
         logger.info(f"Announcement created: {announcement.id} by admin {current_user.id}")
         
@@ -260,21 +247,12 @@ async def create_announcement(
 )
 async def update_announcement(
     announcement_id: int,
-    request: AnnouncementCreateRequest,
+    request: AnnouncementUpdateSchema,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     """
     Update announcement (admin only)
-    
-    Args:
-        announcement_id: Announcement ID
-        request: Updated data
-        current_user: Authenticated user (must be admin)
-        db: Database session
-    
-    Returns:
-        AnnouncementResponse: Updated announcement
     """
     try:
         # Check if admin
@@ -295,14 +273,21 @@ async def update_announcement(
                 detail="Announcement not found"
             )
         
-        # Update fields
-        announcement.title = request.title
-        announcement.content = request.content
-        announcement.announcement_type = request.announcement_type
-        announcement.category = request.category
-        announcement.priority = request.priority
-        announcement.image_url = request.image_url
-        announcement.expires_at = request.expires_at
+        # Update fields dynamically if they are provided
+        if request.title is not None:
+            announcement.title = request.title
+        if request.content is not None:
+            announcement.content = request.content
+        if request.announcement_type is not None:
+            announcement.announcement_type = request.announcement_type
+        if request.category is not None:
+            announcement.category = request.category
+        if request.priority is not None:
+            announcement.priority = request.priority
+        if request.image_url is not None:
+            announcement.image_url = request.image_url
+        if request.expires_at is not None:
+            announcement.expires_at = request.expires_at
         
         db.commit()
         db.refresh(announcement)
@@ -342,14 +327,6 @@ async def delete_announcement(
 ):
     """
     Delete announcement (admin only)
-    
-    Args:
-        announcement_id: Announcement ID
-        current_user: Authenticated user (must be admin)
-        db: Database session
-    
-    Returns:
-        dict: Success message
     """
     try:
         # Check if admin
