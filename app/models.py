@@ -379,6 +379,7 @@ class Session(Base):
     status = Column(String(20), default="pending")
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    is_published = Column(Boolean, default=True)  # Add this exact line
     
     # Relationships
     speakers = relationship(
