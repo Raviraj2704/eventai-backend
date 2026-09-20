@@ -72,7 +72,6 @@ def create_session(
         new_session = SessionModel(
     title=session.title,
     description=session.description,
-    session_type=session.session_type or "workshop",
     start_time=session.start_time,
     end_time=session.end_time,
     location=session.location,
