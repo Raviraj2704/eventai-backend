@@ -70,16 +70,17 @@ def create_session(
 
    try:
         new_session = SessionModel(
-    title=session.title,
-    description=session.description,
-    start_time=session.start_time,
-    end_time=session.end_time,
-    location=session.location,
-    capacity=session.max_attendees or 100,
-    category=session.category or "workshop",
-    is_published=True,
-    actual_attendees=0
-)
+            title=session.title,
+            description=session.description,
+            start_time=session.start_time,
+            end_time=session.end_time,
+            location=session.location,
+            max_attendees=session.max_attendees or 100,
+            category=session.category or "workshop",
+            is_published=True,
+            actual_attendees=0
+        )
+
         db.add(new_session)
         db.commit()
         db.refresh(new_session)
