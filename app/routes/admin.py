@@ -23,15 +23,18 @@ router = APIRouter()
 
 def require_admin(current_user: User = Depends(get_current_user)):
     """Verify user is admin"""
-    if not current_user.get("is_admin"):
+    is_admin = getattr(current_user, "is_admin", False)
+    if not is_admin:
         raise HTTPException(status_code=403, detail="Admin access required")
     return current_user
 
 def require_role(required_roles: list):
     """Factory function to create role-based dependency"""
     async def verify_role(current_user: User = Depends(get_current_user)):
-        if current_user.get("role") not in required_roles and not current_user.get("is_admin"):
-            raise HTTPException(status_code=403, detail=f"Role {current_user.get('role')} not authorized")
+        is_admin = getattr(current_user, "is_admin", False)
+        user_role = getattr(current_user, "role", "admin" if is_admin else "user")
+        if user_role not in required_roles and not is_admin:
+            raise HTTPException(status_code=403, detail=f"Role '{user_role}' not authorized")
         return current_user
     return verify_role
 
