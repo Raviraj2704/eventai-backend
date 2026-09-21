@@ -11,6 +11,7 @@ import json
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
+from streamlit import user
 from app.database import get_db
 from app.models import User
 from app.schemas import RegisterSchema, LoginSchema, TokenResponse, UserResponse
@@ -101,36 +102,37 @@ def login(request: LoginSchema, db: Session = Depends(get_db)):
         raw_pw = request.password.get_secret_value() if hasattr(request.password, 'get_secret_value') else str(request.password)
         clean_password = raw_pw.strip()[:72]
         
-        # ✅ Use the clean_password to verify
+        # Use the clean_password to verify
         if not verify_password(clean_password, user.password_hash):
             raise HTTPException(status_code=401, detail="Invalid email or password")
-        
+
         if not user.is_active:
             raise HTTPException(status_code=403, detail="User account is inactive")
-        
+
         access_token = create_access_token(data={"sub": str(user.id)})
         refresh_token = create_refresh_token(data={"sub": str(user.id)})
-        
+
+        user_role = getattr(user, "role", "admin" if user.is_admin else "user")
+
         return {
-        "access_token": access_token,
-        "token_type": "bearer",
-        "user_id": user.id,
-        "user_role": user.role,
-        "is_admin": user.is_admin,
-        "user": {
-            "id": user.id,
-            "email": user.email,
-            "role": user.role,
-            "is_admin": user.is_admin
+            "access_token": access_token,
+            "token_type": "bearer",
+            "user_id": user.id,
+            "user_role": user_role,
+            "is_admin": user.is_admin,
+            "user": {
+                "id": user.id,
+                "email": user.email,
+                "role": user_role,
+                "is_admin": user.is_admin
+            }
         }
-    }
-    
+
     except HTTPException as e:
         raise e
     except Exception as e:
         logger.error(f"❌ Login error: {str(e)}")
         raise HTTPException(status_code=500, detail="Login failed")
-
 
 # ============================================================================
 # REFRESH TOKEN ENDPOINT
