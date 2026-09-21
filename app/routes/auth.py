@@ -111,12 +111,15 @@ def login(request: LoginSchema, db: Session = Depends(get_db)):
         refresh_token = create_refresh_token(data={"sub": str(user.id)})
         
         return {
-            "access_token": access_token,
-            "refresh_token": refresh_token,
-            "token_type": "bearer",
-            "is_admin": user.is_admin,
-        }
-        
+    "access_token": access_token,
+    "token_type": "bearer",
+    "user": {
+        "id": user.id,
+        "email": user.email,
+        "is_admin": user.is_admin  # Ensure this is present
+    },
+    "is_admin": user.is_admin
+}
     except HTTPException as e:
         raise e
     except Exception as e:
