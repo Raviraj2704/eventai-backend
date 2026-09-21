@@ -11,7 +11,6 @@ import json
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
-from streamlit import user
 from app.database import get_db
 from app.models import User
 from app.schemas import RegisterSchema, LoginSchema, TokenResponse, UserResponse
