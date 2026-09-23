@@ -5,7 +5,8 @@
 # Purpose: User profile management endpoints
 # Status: Production-Ready ✅
 
-from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File
+from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File,Query
+from typing import Optional
 from sqlalchemy.orm import Session
 from datetime import datetime
 import logging
@@ -318,3 +319,54 @@ async def delete_account(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to delete account"
         )
+
+@router.get("")
+def get_all_users(
+    designation: Optional[str] = Query(None, description="Filter by job title"),
+    db: Session = Depends(get_db)
+):
+    """Get all users with optional job title filter"""
+    query = db.query(User)
+    
+    if designation:
+        query = query.filter(User.job_title.ilike(f"%{designation}%"))
+    
+    users = query.all()
+    return users
+
+
+@router.get("/search")
+def search_users(
+    q: str = Query(..., min_length=1, description="Search by name or email"),
+    db: Session = Depends(get_db)
+):
+    """Search users by full name or email"""
+    search_term = f"%{q}%"
+    
+    users = db.query(User).filter(
+        (User.first_name.ilike(search_term)) |
+        (User.last_name.ilike(search_term)) |
+        (User.email.ilike(search_term))
+    ).all()
+    
+    if not users:
+        return []
+    
+    return users
+
+
+@router.get("/designations")
+def get_unique_designations(db: Session = Depends(get_db)):
+    """Get list of all unique job titles/designations"""
+    designations = db.query(User.job_title).filter(
+        User.job_title.isnot(None)
+    ).distinct().all()
+    
+    result = [
+        desc[0] 
+        for desc in designations 
+        if desc[0] and desc[0].strip()
+    ]
+    
+    result.sort()
+    return result    

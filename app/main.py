@@ -121,7 +121,7 @@ app.add_middleware(
 from app.routes import (
     auth, sessions, speakers, resources, badges, 
     challenges, leaderboard, learning_paths, ratings,
-    social, announcements, engagement, partners, users, admin, analytics, ai_routes, admin
+    social, announcements, engagement, partners, users, admin, analytics, ai_routes, admin, messages, events
 )
 # ============================================================================
 # INCLUDE ROUTERS
@@ -129,6 +129,7 @@ from app.routes import (
 
 app.include_router(auth.router, prefix="/api/v1/auth", tags=["Auth"])
 app.include_router(users.router, prefix="/api/v1/users", tags=["Users"])
+app.include_router(events.router, prefix="/api/v1/events", tags=["Events"])
 app.include_router(sessions.router, prefix="/api/v1/sessions", tags=["Sessions"])
 app.include_router(speakers.router, prefix="/api/v1/speakers", tags=["Speakers"])
 app.include_router(resources.router, prefix="/api/v1/resources", tags=["Resources"])
@@ -145,6 +146,7 @@ app.include_router(admin.router, prefix="/api/v1/admin", tags=["Admin"])
 app.include_router(analytics.router, prefix="/api/v1/analytics", tags=["Analytics"])
 app.include_router(ai_routes.router, prefix="/api/v1/ai", tags=["AI Features"])
 app.include_router(admin.router, prefix="/api/v1/admin", tags=["Admin"])
+app.include_router(messages.router, prefix="/api/v1/messages", tags=["Messages"])
 
 # ============================================================================
 # HEALTH CHECK ENDPOINTS
