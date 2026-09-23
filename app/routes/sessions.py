@@ -6,10 +6,10 @@
 # Status: Production-Ready ✅
 
 from fastapi import APIRouter, Depends, HTTPException, status, Query
-from sqlalchemy.orm import Session
-from sqlalchemy import and_, or_
 from datetime import datetime
 from typing import Optional
+from sqlalchemy.orm import Session
+from sqlalchemy import and_, or_
 from pydantic import BaseModel
 import logging
 
@@ -140,6 +140,7 @@ async def get_sessions(
     category: Optional[str] = None,
     difficulty: Optional[str] = None,
     search: Optional[str] = None,
+    day: Optional[str] = Query(None, description="Filter by date (YYYY-MM-DD)"),
     current_user: Optional[User] = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
@@ -163,6 +164,15 @@ async def get_sessions(
                     SessionModel.description.ilike(f"%{search}%")
                 )
             )
+                
+            if day:
+                try:
+                    from datetime import datetime
+                    from sqlalchemy import func
+                    date_obj = datetime.strptime(day, "%Y-%m-%d").date()
+                    query = query.filter(func.date(SessionModel.start_time) == date_obj)
+                except ValueError:
+                    raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD")            
         
         # Sort by start time (upcoming first)
         query = query.order_by(SessionModel.start_time.asc())
