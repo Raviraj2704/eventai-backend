@@ -5,11 +5,10 @@
 # Purpose: User profile management endpoints
 # Status: Production-Ready ✅
 
-from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File,Query
+from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Query
 from typing import Optional
 from sqlalchemy.orm import Session
 from datetime import datetime
-from fastapi import status
 import logging
 
 from app.database import get_db
@@ -118,7 +117,7 @@ async def get_current_user_profile(
     Get current user's profile
     """
     try:
-        return UserProfileResponse.from_attributes(current_user)
+        return UserProfileResponse.model_validate(current_user)
     except Exception as e:
         logger.error(f"Get profile error: {e}")
         raise HTTPException(
@@ -169,7 +168,7 @@ async def update_user_profile(
         
         return UserUpdateResponse(
             message="Profile updated successfully",
-            user=UserProfileResponse.from_attributes(current_user)
+            user=UserProfileResponse.model_validate(current_user)
         )
     
     except Exception as e:
@@ -244,49 +243,6 @@ async def upload_avatar(
 
 
 # ============================================================================
-# GET USER BY ID
-# ============================================================================
-
-@router.get(
-    "/{user_id}",
-    response_model=UserProfileResponse,
-    responses={404: {"model": ErrorResponse}}
-)
-async def get_user_by_id(
-    user_id: int,
-    db: Session = Depends(get_db)
-):
-    """
-    Get user by ID
-    """
-    try:
-        user = db.query(User).filter(User.id == user_id).first()
-        
-        if not user:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="User not found"
-            )
-        
-        if not user.is_active:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="User not found"
-            )
-        
-        return UserProfileResponse.from_attributes(user)
-    
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Get user error: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to fetch user"
-        )
-
-
-# ============================================================================
 # DELETE ACCOUNT
 # ============================================================================
 
@@ -321,20 +277,6 @@ async def delete_account(
             detail="Failed to delete account"
         )
 
-@router.get("")
-def get_all_users(
-    designation: Optional[str] = Query(None, description="Filter by job title"),
-    db: Session = Depends(get_db)
-):
-    """Get all users with optional job title filter"""
-    query = db.query(User)
-    
-    if designation:
-        query = query.filter(User.job_title.ilike(f"%{designation}%"))
-    
-    users = query.all()
-    return users
-
 
 @router.get("/search")
 def search_users(
@@ -366,11 +308,71 @@ def get_unique_designations(db: Session = Depends(get_db)):
     result = [
         desc[0] 
         for desc in designations 
+        for _ in [1]
         if desc[0] and desc[0].strip()
     ]
     
     result.sort()
     return result    
+
+
+# ============================================================================
+# GET USER BY ID
+# ============================================================================
+
+@router.get(
+    "/{user_id}",
+    response_model=UserProfileResponse,
+    responses={404: {"model": ErrorResponse}}
+)
+async def get_user_by_id(
+    user_id: int,
+    db: Session = Depends(get_db)
+):
+    """
+    Get user by ID
+    """
+    try:
+        user = db.query(User).filter(User.id == user_id).first()
+        
+        if not user:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="User not found"
+            )
+        
+        if not user.is_active:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="User not found"
+            )
+        
+        return UserProfileResponse.model_validate(user)
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Get user error: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to fetch user"
+        )
+
+
+@router.get("")
+def get_all_users(
+    designation: Optional[str] = Query(None, description="Filter by job title"),
+    db: Session = Depends(get_db)
+):
+    """Get all users with optional job title filter"""
+    query = db.query(User)
+    
+    if designation:
+        query = query.filter(User.job_title.ilike(f"%{designation}%"))
+    
+    users = query.all()
+    return users
+
 
 # NEW ROUTE: Handle connection requests from the Networking page
 @router.post("/{user_id}/connect", status_code=status.HTTP_200_OK)
