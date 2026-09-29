@@ -25,13 +25,37 @@ router = APIRouter(tags=["Ratings"])
 
 
 # ============================================================================
-# SCHEMAS
+# SCHEMAS & SERIALIZATION HELPER
 # ============================================================================
 
 class RatingCreateSchema(BaseModel):
     session_id: int
     score: int
     review: Optional[str] = None
+
+
+def _serialize_rating(rating: Rating):
+    """
+    Safely serialize a Rating ORM object using Pydantic v2 model_validate
+    with a dictionary fallback if target_id or enum fields are null in DB.
+    """
+    try:
+        return RatingResponse.model_validate(rating)
+    except Exception:
+        r_type = getattr(rating, "rating_type", None)
+        r_type_val = r_type.value if hasattr(r_type, "value") else (str(r_type) if r_type else "session")
+        return {
+            "id": getattr(rating, "id", 0),
+            "user_id": getattr(rating, "user_id", 0),
+            "session_id": getattr(rating, "session_id", None),
+            "speaker_id": getattr(rating, "speaker_id", None),
+            "resource_id": getattr(rating, "resource_id", None),
+            "target_id": getattr(rating, "target_id", None) or getattr(rating, "session_id", None) or 0,
+            "rating_type": r_type_val,
+            "score": getattr(rating, "score", 0) or 0,
+            "feedback": getattr(rating, "feedback", None) or "",
+            "created_at": rating.created_at.isoformat() if getattr(rating, "created_at", None) else datetime.utcnow().isoformat()
+        }
 
 
 # ============================================================================
@@ -52,7 +76,7 @@ async def get_ratings(
         ratings = db.query(Rating).order_by(Rating.created_at.desc()).limit(50).all()
 
         ratings_data = [
-            RatingResponse.from_attributes(rating) for rating in ratings
+            _serialize_rating(rating) for rating in ratings
         ]
 
         return {
@@ -86,7 +110,10 @@ async def get_rating_dashboard(
         all_ratings = db.query(Rating).all()
 
         total_ratings = len(all_ratings)
-        average_rating = sum(r.score for r in all_ratings) / total_ratings if all_ratings else 0
+        average_rating = (
+            sum((r.score or 0) for r in all_ratings) / total_ratings
+            if all_ratings else 0
+        )
 
         distribution = {
             "five_stars": len([r for r in all_ratings if r.score == 5]),
@@ -101,24 +128,28 @@ async def get_rating_dashboard(
         ).limit(10).all()
 
         recent_data = [
-            RatingResponse.from_attributes(r) for r in recent_ratings
+            _serialize_rating(r) for r in recent_ratings
         ]
 
         ratings_by_type = {}
         for rating_type in RatingType:
-            count = len([r for r in all_ratings if r.rating_type == rating_type])
-            avg = sum(r.score for r in all_ratings if r.rating_type == rating_type) / count if count > 0 else 0
+            matching = [r for r in all_ratings if r.rating_type == rating_type]
+            count = len(matching)
+            avg = sum((r.score or 0) for r in matching) / count if count > 0 else 0
             ratings_by_type[rating_type.value] = {
                 "count": count,
                 "average": round(avg, 2)
             }
 
+        summary_obj = {
+            "total_ratings": total_ratings,
+            "average_rating": round(average_rating, 2),
+            "distribution": distribution
+        }
+
         return {
-            "summary": {
-                "total_ratings": total_ratings,
-                "average_rating": round(average_rating, 2),
-                "distribution": distribution
-            },
+            "summary": summary_obj,
+            "data": summary_obj,
             "by_type": ratings_by_type,
             "recent_feedback": recent_data,
             "charts": {
@@ -172,7 +203,8 @@ async def get_ratings_by_type(
                     "two_stars": 0,
                     "one_star": 0,
                 },
-                "recent": []
+                "recent": [],
+                "data": []
             }
 
         ratings = db.query(Rating).filter(
@@ -180,7 +212,7 @@ async def get_ratings_by_type(
         ).all()
 
         total = len(ratings)
-        average = sum(r.score for r in ratings) / total if total > 0 else 0
+        average = sum((r.score or 0) for r in ratings) / total if total > 0 else 0
 
         distribution = {
             "five_stars": len([r for r in ratings if r.score == 5]),
@@ -191,7 +223,7 @@ async def get_ratings_by_type(
         }
 
         ratings_data = [
-            RatingResponse.from_attributes(r) for r in ratings[:20]
+            _serialize_rating(r) for r in ratings[:20]
         ]
 
         return {
@@ -199,7 +231,8 @@ async def get_ratings_by_type(
             "total": total,
             "average": round(average, 2),
             "distribution": distribution,
-            "recent": ratings_data
+            "recent": ratings_data,
+            "data": ratings_data
         }
 
     except HTTPException:

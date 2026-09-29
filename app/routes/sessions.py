@@ -6,10 +6,10 @@
 # Status: Production-Ready ✅
 
 from fastapi import APIRouter, Depends, HTTPException, status, Query
-from datetime import datetime
-from typing import Optional
 from sqlalchemy.orm import Session
 from sqlalchemy import and_, or_
+from datetime import datetime
+from typing import Optional
 from pydantic import BaseModel
 import logging
 
@@ -36,12 +36,12 @@ router = APIRouter(tags=["Sessions"])
 class SessionCreateSchema(BaseModel):
     title: str
     description: str
+    session_type: str
     start_time: datetime
     end_time: datetime
-    location: Optional[str] = None
-    category: Optional[str] = "workshop"
-    max_attendees: Optional[int] = 100
-    session_type: Optional[str] = "workshop"
+    location: str
+    capacity: int
+    category: Optional[str] = None
 
 class SessionUpdateSchema(BaseModel):
     title: Optional[str] = None
@@ -59,34 +59,30 @@ def create_session(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-   """Only speakers or admins can create sessions"""
-    # Safe checks that work whether current_user is a dict or an ORM object
-   user_role = getattr(current_user, "role", None) or (current_user.get("role") if isinstance(current_user, dict) else None)
-   is_admin = getattr(current_user, "is_admin", False) or (current_user.get("is_admin", False) if isinstance(current_user, dict) else False)
-   user_id = getattr(current_user, "id", None) or (current_user.get("id") if isinstance(current_user, dict) else None)
-
-   if user_role not in ["speaker", "admin"] and not is_admin:
-        raise HTTPException(status_code=403, detail="Not authorized to create sessions")
-
-   try:
+    """Only speakers can create sessions"""
+    if current_user.role != 'speaker':
+        raise HTTPException(status_code=403, detail="Only speakers can create sessions")
+    
+    try:
         new_session = SessionModel(
             title=session.title,
             description=session.description,
+            session_type=session.session_type,
+            speaker_id=current_user.id,
             start_time=session.start_time,
             end_time=session.end_time,
             location=session.location,
-            max_attendees=session.max_attendees or 100,
-            category=session.category or "workshop",
-            is_published=True,
+            capacity=session.capacity,
+            category=session.category
         )
-
         db.add(new_session)
         db.commit()
         db.refresh(new_session)
         return {"message": "Session successfully created!", "session_id": new_session.id}
-   except Exception as e:
+    except Exception as e:
         db.rollback()
         raise HTTPException(status_code=500, detail=str(e))
+
 
 # ============================================================================
 # UPDATE A SESSION
@@ -140,7 +136,6 @@ async def get_sessions(
     category: Optional[str] = None,
     difficulty: Optional[str] = None,
     search: Optional[str] = None,
-    day: Optional[str] = Query(None, description="Filter by date (YYYY-MM-DD)"),
     current_user: Optional[User] = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
@@ -164,15 +159,6 @@ async def get_sessions(
                     SessionModel.description.ilike(f"%{search}%")
                 )
             )
-                
-            if day:
-                try:
-                    from datetime import datetime
-                    from sqlalchemy import func
-                    date_obj = datetime.strptime(day, "%Y-%m-%d").date()
-                    query = query.filter(func.date(SessionModel.start_time) == date_obj)
-                except ValueError:
-                    raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD")            
         
         # Sort by start time (upcoming first)
         query = query.order_by(SessionModel.start_time.asc())

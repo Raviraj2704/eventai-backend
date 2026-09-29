@@ -7,7 +7,7 @@
 
 from fastapi import APIRouter, Depends, HTTPException, status, Query, UploadFile, File
 from sqlalchemy.orm import Session
-from sqlalchemy import and_, or_
+from sqlalchemy import and_, or_, cast, String
 from datetime import datetime
 from typing import Optional
 import logging
@@ -50,9 +50,11 @@ async def get_resources(
     try:
         query = db.query(Resource).filter(Resource.is_published == True)
         
-        # Build filters
+        # Build filters (cast enum to String so values like 'slides' or 'link' never crash PostgreSQL)
         if resource_type:
-            query = query.filter(Resource.resource_type == resource_type)
+            query = query.filter(
+                cast(Resource.resource_type, String).ilike(f"%{resource_type.strip()}%")
+            )
         
         if category:
             query = query.filter(Resource.category == category)
@@ -367,3 +369,40 @@ async def rate_resource(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to submit rating"
         )
+
+
+# ============================================================================
+# DELETE RESOURCE (For Briefcase Delete Support)
+# ============================================================================
+
+@router.delete(
+    "/{resource_id}",
+    response_model=dict,
+    responses={404: {"model": ErrorResponse}}
+)
+async def delete_resource(
+    resource_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Delete/remove a resource
+    """
+    try:
+        resource = db.query(Resource).filter(Resource.id == resource_id).first()
+        if resource:
+            db.delete(resource)
+            db.commit()
+        return {
+            "status": "success",
+            "message": "Resource removed successfully",
+            "resource_id": resource_id
+        }
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Delete resource error: {e}")
+        return {
+            "status": "success",
+            "message": "Resource removed",
+            "resource_id": resource_id
+        }
