@@ -5,10 +5,9 @@
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
-from sqlalchemy import func
-from datetime import datetime, timedelta
+from sqlalchemy import func, and_
+from datetime import datetime
 import logging
-from typing import Any
 
 from app.database import get_db
 from app.models import User, Session as SessionModel, SessionAttendance
@@ -18,50 +17,26 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
-
-def _u_get(user: Any, key: str, default: Any = None) -> Any:
-    """Safely extract attribute from either a dict or SQLAlchemy User model."""
-    if isinstance(user, dict):
-        return user.get(key, default)
-    return getattr(user, key, default)
-
-
 # ============================================================================
 # RBAC Middleware Functions
 # ============================================================================
 
-def require_admin(
-    current_user: Any = Depends(get_current_user),
-    db: Session = Depends(get_db)
-):
-    """Verify user is authenticated and ensure admin access."""
-    if not current_user:
-        raise HTTPException(status_code=401, detail="Authentication required")
-
-    user_id = _u_get(current_user, "id")
-    if user_id:
-        db_user = db.query(User).filter(User.id == user_id).first()
-        if db_user:
-            # Auto-promote primary user / admin account if not yet flagged in DB
-            if not getattr(db_user, "is_admin", False):
-                try:
-                    db_user.is_admin = True
-                    if hasattr(db_user, "role"):
-                        db_user.role = "admin"
-                    db.commit()
-                except Exception:
-                    db.rollback()
-            return db_user
-
+def require_admin(current_user: User = Depends(get_current_user)):
+    """Verify user is admin"""
+    is_admin = getattr(current_user, "is_admin", False)
+    if not is_admin:
+        raise HTTPException(status_code=403, detail="Admin access required")
     return current_user
-
 
 def require_role(required_roles: list):
     """Factory function to create role-based dependency"""
-    async def verify_role(current_user: Any = Depends(require_admin)):
+    async def verify_role(current_user: User = Depends(get_current_user)):
+        is_admin = getattr(current_user, "is_admin", False)
+        user_role = getattr(current_user, "role", "admin" if is_admin else "user")
+        if user_role not in required_roles and not is_admin:
+            raise HTTPException(status_code=403, detail=f"Role '{user_role}' not authorized")
         return current_user
     return verify_role
-
 
 # ============================================================================
 # USER MANAGEMENT - View & Control Users
@@ -70,7 +45,7 @@ def require_role(required_roles: list):
 @router.get("/users")
 async def list_users(
     db: Session = Depends(get_db),
-    current_user: Any = Depends(require_admin),
+    current_user: User = Depends(require_admin),
     limit: int = Query(100, ge=1, le=500),
     offset: int = Query(0, ge=0),
     role: str = Query(None),
@@ -78,63 +53,45 @@ async def list_users(
 ):
     """
     PRODUCTION: List all users with filtering.
+    
+    Admin only endpoint. Returns all user data for management.
     """
     try:
         query = db.query(User)
 
-        if role and hasattr(User, "role"):
+        # Apply filters
+        if role:
             query = query.filter(User.role == role)
-        if is_active is not None and hasattr(User, "is_active"):
+        if is_active is not None:
             query = query.filter(User.is_active == is_active)
 
         total = query.count()
         users = query.offset(offset).limit(limit).all()
 
-        user_list = []
-        for u in users:
-            first_name = getattr(u, "first_name", "") or ""
-            last_name = getattr(u, "last_name", "") or ""
-            full_name = (
-                getattr(u, "full_name", None)
-                or f"{first_name} {last_name}".strip()
-                or getattr(u, "username", None)
-                or getattr(u, "email", "User")
-            )
-            created_at = getattr(u, "created_at", None)
-            last_login = getattr(u, "last_login", None)
-            u_is_admin = getattr(u, "is_admin", False)
-            u_role = getattr(u, "role", None) or ("admin" if u_is_admin else "user")
-
-            attended_count = db.query(func.count(SessionAttendance.id)).filter(
-                SessionAttendance.user_id == u.id,
-                SessionAttendance.attended == True
-            ).scalar() or 0
-
-            user_list.append({
-                "id": u.id,
-                "username": getattr(u, "username", None) or full_name,
-                "first_name": first_name or full_name.split(" ")[0],
-                "last_name": last_name or (full_name.split(" ")[1] if " " in full_name else ""),
-                "full_name": full_name,
-                "name": full_name,
-                "email": getattr(u, "email", ""),
-                "role": u_role,
-                "is_admin": bool(u_is_admin),
-                "is_active": getattr(u, "is_active", True),
-                "status": "active" if getattr(u, "is_active", True) else "inactive",
-                "job_title": getattr(u, "job_title", None) or "Attendee",
-                "company": getattr(u, "company", None) or "NextGen AI Expo",
-                "location": getattr(u, "location", None) or "Online",
-                "experience_years": getattr(u, "experience_years", 0) or 0,
-                "total_points": getattr(u, "total_points", 0) or 0,
-                "created_at": created_at.isoformat() if hasattr(created_at, "isoformat") else None,
-                "last_login": last_login.isoformat() if hasattr(last_login, "isoformat") else None,
-                "sessions_attended": attended_count
-            })
-
         return {
             "status": "success",
-            "data": user_list,
+            "data": [
+                {
+                    "id": u.id,
+                    "full_name": u.full_name,
+                    "email": u.email,
+                    "role": u.role or "user",
+                    "is_admin": u.is_admin,
+                    "is_active": u.is_active,
+                    "job_title": u.job_title,
+                    "company": u.company,
+                    "location": u.location,
+                    "experience_years": u.experience_years,
+                    "total_points": u.total_points or 0,
+                    "created_at": u.created_at.isoformat() if u.created_at else None,
+                    "last_login": u.last_login.isoformat() if u.last_login else None,
+                    "sessions_attended": db.query(func.count(SessionAttendance.id)).filter(
+                        SessionAttendance.user_id == u.id,
+                        SessionAttendance.attended == True
+                    ).scalar()
+                }
+                for u in users
+            ],
             "total": total,
             "limit": limit,
             "offset": offset
@@ -150,10 +107,13 @@ async def update_user_role(
     user_id: int,
     request_body: dict,
     db: Session = Depends(get_db),
-    current_user: Any = Depends(require_admin)
+    current_user: User = Depends(require_admin)
 ):
     """
     PRODUCTION: Update user role.
+    
+    Valid roles: user, speaker, moderator, admin
+    Only admins can change roles.
     """
     try:
         user = db.query(User).filter(User.id == user_id).first()
@@ -166,14 +126,16 @@ async def update_user_role(
         if new_role not in valid_roles:
             raise HTTPException(status_code=400, detail=f"Invalid role. Must be one of: {valid_roles}")
 
-        if hasattr(user, "role"):
-            user.role = new_role
-        if hasattr(user, "is_admin"):
-            user.is_admin = (new_role == "admin")
+        # Update role
+        user.role = new_role
+        if new_role == "admin":
+            user.is_admin = True
+        else:
+            user.is_admin = False
 
         db.commit()
 
-        logger.info(f"User {user_id} role changed to {new_role} by admin {_u_get(current_user, 'id')}")
+        logger.info(f"User {user_id} role changed to {new_role} by admin {current_user.id}")
 
         return {
             "status": "success",
@@ -194,24 +156,25 @@ async def update_user_role(
 async def deactivate_user(
     user_id: int,
     db: Session = Depends(get_db),
-    current_user: Any = Depends(require_admin)
+    current_user: User = Depends(require_admin)
 ):
     """
     PRODUCTION: Revoke user access.
+    
+    Sets is_active=false, user cannot log in.
     """
     try:
-        if user_id == _u_get(current_user, "id"):
+        if user_id == current_user.id:
             raise HTTPException(status_code=400, detail="Cannot deactivate yourself")
 
         user = db.query(User).filter(User.id == user_id).first()
         if not user:
             raise HTTPException(status_code=404, detail="User not found")
 
-        if hasattr(user, "is_active"):
-            user.is_active = False
+        user.is_active = False
         db.commit()
 
-        logger.warning(f"User {user_id} deactivated by admin {_u_get(current_user, 'id')}")
+        logger.warning(f"User {user_id} deactivated by admin {current_user.id}")
 
         return {
             "status": "success",
@@ -231,7 +194,7 @@ async def deactivate_user(
 async def reactivate_user(
     user_id: int,
     db: Session = Depends(get_db),
-    current_user: Any = Depends(require_admin)
+    current_user: User = Depends(require_admin)
 ):
     """
     PRODUCTION: Re-enable user access.
@@ -241,11 +204,10 @@ async def reactivate_user(
         if not user:
             raise HTTPException(status_code=404, detail="User not found")
 
-        if hasattr(user, "is_active"):
-            user.is_active = True
+        user.is_active = True
         db.commit()
 
-        logger.info(f"User {user_id} reactivated by admin {_u_get(current_user, 'id')}")
+        logger.info(f"User {user_id} reactivated by admin {current_user.id}")
 
         return {
             "status": "success",
@@ -260,152 +222,13 @@ async def reactivate_user(
 
 
 # ============================================================================
-# CONTENT MODERATION - View & Moderate Content
-# ============================================================================
-
-@router.get("/moderation/content")
-async def get_moderation_content(
-    db: Session = Depends(get_db),
-    current_user: Any = Depends(require_admin),
-    limit: int = Query(50, ge=1, le=200),
-    status_filter: str = Query(None, alias="status")
-):
-    """
-    PRODUCTION: Get content items for admin moderation.
-    """
-    try:
-        items = []
-
-        # Include sessions in moderation queue
-        sessions = db.query(SessionModel).order_by(SessionModel.id.desc()).limit(limit).all()
-        for s in sessions:
-            is_approved = getattr(s, "is_approved", getattr(s, "is_published", True))
-            item_status = "approved" if is_approved else "pending"
-            if status_filter and item_status != status_filter.lower():
-                continue
-
-            created_at = getattr(s, "created_at", datetime.utcnow())
-            items.append({
-                "id": s.id,
-                "type": "session",
-                "content_type": "Session",
-                "title": getattr(s, "title", "Event Session"),
-                "content": getattr(s, "description", "") or getattr(s, "title", ""),
-                "author": getattr(s, "speaker_name", "Speaker"),
-                "status": item_status,
-                "flagged": False,
-                "reports_count": 0,
-                "created_at": created_at.isoformat() if hasattr(created_at, "isoformat") else datetime.utcnow().isoformat()
-            })
-
-        return {
-            "status": "success",
-            "data": items,
-            "total": len(items)
-        }
-
-    except Exception as e:
-        logger.error(f"Moderation content error: {str(e)}")
-        return {
-            "status": "success",
-            "data": [],
-            "total": 0
-        }
-
-
-@router.post("/moderation/content/{content_id}/{action}")
-@router.put("/moderation/content/{content_id}/{action}")
-async def moderate_content_item(
-    content_id: int,
-    action: str,
-    db: Session = Depends(get_db),
-    current_user: Any = Depends(require_admin)
-):
-    """Approve, reject, or delete a moderated content item."""
-    return {
-        "status": "success",
-        "message": f"Content {content_id} {action}d successfully",
-        "id": content_id,
-        "action": action
-    }
-
-
-# ============================================================================
-# AUDIT LOGS - System & Admin Activity Logs
-# ============================================================================
-
-@router.get("/logs")
-async def get_admin_logs(
-    db: Session = Depends(get_db),
-    current_user: Any = Depends(require_admin),
-    limit: int = Query(50, ge=1, le=200)
-):
-    """
-    PRODUCTION: Return system and admin audit logs.
-    """
-    try:
-        now = datetime.utcnow()
-        admin_email = _u_get(current_user, "email", "admin@eventai.com")
-
-        users = db.query(User).order_by(User.id.desc()).limit(10).all()
-        logs = [
-            {
-                "id": 1,
-                "action": "ADMIN_DASHBOARD_ACCESS",
-                "event": "Admin Dashboard Accessed",
-                "user": admin_email,
-                "username": admin_email,
-                "role": "admin",
-                "level": "INFO",
-                "status": "success",
-                "details": "Admin viewed system management dashboard",
-                "ip_address": "127.0.0.1",
-                "timestamp": now.isoformat(),
-                "created_at": now.isoformat()
-            }
-        ]
-
-        for idx, u in enumerate(users, start=2):
-            u_created = getattr(u, "created_at", None) or (now - timedelta(minutes=idx * 15))
-            u_email = getattr(u, "email", f"user{u.id}@eventai.com")
-            logs.append({
-                "id": idx,
-                "action": "USER_AUTHENTICATED",
-                "event": "User Account Active",
-                "user": u_email,
-                "username": getattr(u, "username", None) or u_email,
-                "role": getattr(u, "role", "user") or "user",
-                "level": "INFO",
-                "status": "success",
-                "details": f"User {u_email} verified in platform database",
-                "ip_address": "152.57.228.74",
-                "timestamp": u_created.isoformat() if hasattr(u_created, "isoformat") else now.isoformat(),
-                "created_at": u_created.isoformat() if hasattr(u_created, "isoformat") else now.isoformat()
-            })
-
-        return {
-            "status": "success",
-            "data": logs[:limit],
-            "total": len(logs[:limit])
-        }
-
-    except Exception as e:
-        logger.error(f"Admin logs error: {str(e)}")
-        return {
-            "status": "success",
-            "data": [],
-            "total": 0
-        }
-
-
-# ============================================================================
 # SESSION MANAGEMENT - Approve & Control Sessions
 # ============================================================================
 
 @router.get("/sessions")
 async def list_sessions(
     db: Session = Depends(get_db),
-    current_user: Any = Depends(require_admin),
+    current_user: User = Depends(require_admin),
     limit: int = Query(100, ge=1, le=500),
     offset: int = Query(0, ge=0),
     is_approved: bool = Query(None)
@@ -416,43 +239,36 @@ async def list_sessions(
     try:
         query = db.query(SessionModel)
 
-        if is_approved is not None and hasattr(SessionModel, "is_approved"):
+        if is_approved is not None:
             query = query.filter(SessionModel.is_approved == is_approved)
 
         total = query.count()
         sessions = query.offset(offset).limit(limit).all()
 
-        session_list = []
-        for s in sessions:
-            start_time = getattr(s, "start_time", None)
-            end_time = getattr(s, "end_time", None)
-            created_at = getattr(s, "created_at", None)
-
-            attendee_count = db.query(func.count(SessionAttendance.id)).filter(
-                SessionAttendance.session_id == s.id,
-                SessionAttendance.attended == True
-            ).scalar() or 0
-
-            session_list.append({
-                "id": s.id,
-                "title": getattr(s, "title", ""),
-                "description": getattr(s, "description", ""),
-                "speaker_name": getattr(s, "speaker_name", "Speaker"),
-                "speaker_id": getattr(s, "speaker_id", None),
-                "category": getattr(s, "category", "General"),
-                "level": getattr(s, "level", "All Levels"),
-                "location": getattr(s, "location", getattr(s, "room", "Main Hall")),
-                "start_time": start_time.isoformat() if hasattr(start_time, "isoformat") else None,
-                "end_time": end_time.isoformat() if hasattr(end_time, "isoformat") else None,
-                "capacity": getattr(s, "capacity", 100),
-                "is_approved": getattr(s, "is_approved", getattr(s, "is_published", True)),
-                "created_at": created_at.isoformat() if hasattr(created_at, "isoformat") else None,
-                "attendee_count": attendee_count
-            })
-
         return {
             "status": "success",
-            "data": session_list,
+            "data": [
+                {
+                    "id": s.id,
+                    "title": s.title,
+                    "description": s.description,
+                    "speaker_name": s.speaker_name,
+                    "speaker_id": s.speaker_id,
+                    "category": s.category,
+                    "level": s.level,
+                    "location": s.location,
+                    "start_time": s.start_time.isoformat() if s.start_time else None,
+                    "end_time": s.end_time.isoformat() if s.end_time else None,
+                    "capacity": s.capacity,
+                    "is_approved": s.is_approved,
+                    "created_at": s.created_at.isoformat() if s.created_at else None,
+                    "attendee_count": db.query(func.count(SessionAttendance.id)).filter(
+                        SessionAttendance.session_id == s.id,
+                        SessionAttendance.attended == True
+                    ).scalar()
+                }
+                for s in sessions
+            ],
             "total": total,
             "limit": limit,
             "offset": offset
@@ -467,20 +283,20 @@ async def list_sessions(
 async def approve_session(
     session_id: int,
     db: Session = Depends(get_db),
-    current_user: Any = Depends(require_admin)
+    current_user: User = Depends(require_admin)
 ):
+    """
+    PRODUCTION: Approve session for public visibility.
+    """
     try:
         session = db.query(SessionModel).filter(SessionModel.id == session_id).first()
         if not session:
             raise HTTPException(status_code=404, detail="Session not found")
 
-        if hasattr(session, "is_approved"):
-            session.is_approved = True
-        if hasattr(session, "is_published"):
-            session.is_published = True
+        session.is_approved = True
         db.commit()
 
-        logger.info(f"Session {session_id} approved by admin {_u_get(current_user, 'id')}")
+        logger.info(f"Session {session_id} approved by admin {current_user.get('id')}")
 
         return {
             "status": "success",
@@ -488,8 +304,6 @@ async def approve_session(
             "session_id": session_id
         }
 
-    except HTTPException:
-        raise
     except Exception as e:
         logger.error(f"Approve error: {str(e)}")
         db.rollback()
@@ -501,20 +315,23 @@ async def reject_session(
     session_id: int,
     request_body: dict,
     db: Session = Depends(get_db),
-    current_user: Any = Depends(require_admin)
+    current_user: User = Depends(require_admin)
 ):
+    """
+    PRODUCTION: Reject session with reason.
+    """
     try:
         session = db.query(SessionModel).filter(SessionModel.id == session_id).first()
         if not session:
             raise HTTPException(status_code=404, detail="Session not found")
 
-        if hasattr(session, "is_approved"):
-            session.is_approved = False
+        session.is_approved = False
+        # Store rejection reason if you add a field
         reason = request_body.get("reason", "No reason provided")
 
         db.commit()
 
-        logger.warning(f"Session {session_id} rejected by admin {_u_get(current_user, 'id')}. Reason: {reason}")
+        logger.warning(f"Session {session_id} rejected by admin {current_user.get('id')}. Reason: {reason}")
 
         return {
             "status": "success",
@@ -522,8 +339,6 @@ async def reject_session(
             "session_id": session_id
         }
 
-    except HTTPException:
-        raise
     except Exception as e:
         logger.error(f"Reject error: {str(e)}")
         db.rollback()
@@ -534,18 +349,26 @@ async def reject_session(
 async def delete_session(
     session_id: int,
     db: Session = Depends(get_db),
-    current_user: Any = Depends(require_admin)
+    current_user: User = Depends(require_admin)
 ):
+    """
+    PRODUCTION: Permanently delete session.
+    
+    WARNING: Irreversible action. Cascades to related records.
+    """
     try:
         session = db.query(SessionModel).filter(SessionModel.id == session_id).first()
         if not session:
             raise HTTPException(status_code=404, detail="Session not found")
 
+        # Delete related records
         db.query(SessionAttendance).filter(SessionAttendance.session_id == session_id).delete()
+
+        # Delete session
         db.delete(session)
         db.commit()
 
-        logger.warning(f"Session {session_id} deleted by admin {_u_get(current_user, 'id')}")
+        logger.warning(f"Session {session_id} deleted by admin {current_user.get('id')}")
 
         return {
             "status": "success",
@@ -553,8 +376,6 @@ async def delete_session(
             "session_id": session_id
         }
 
-    except HTTPException:
-        raise
     except Exception as e:
         logger.error(f"Delete error: {str(e)}")
         db.rollback()
@@ -568,28 +389,29 @@ async def delete_session(
 @router.get("/analytics/dashboard")
 async def get_analytics_dashboard(
     db: Session = Depends(get_db),
-    current_user: Any = Depends(require_admin)
+    current_user: User = Depends(require_admin)
 ):
+    """
+    PRODUCTION: Admin analytics dashboard with real data.
+    """
     try:
-        total_users = db.query(func.count(User.id)).scalar() or 0
-        active_users = db.query(func.count(User.id)).filter(User.is_active == True).scalar() or 0
-        admin_count = db.query(func.count(User.id)).filter(User.is_admin == True).scalar() or 0
-
-        total_sessions = db.query(func.count(SessionModel.id)).scalar() or 0
-        if hasattr(SessionModel, "is_approved"):
-            approved_sessions = db.query(func.count(SessionModel.id)).filter(
-                SessionModel.is_approved == True
-            ).scalar() or 0
-        else:
-            approved_sessions = total_sessions
-
-        pending_sessions = max(0, total_sessions - approved_sessions)
+        total_users = db.query(func.count(User.id)).scalar()
+        active_users = db.query(func.count(User.id)).filter(User.is_active == True).scalar()
+        admin_count = db.query(func.count(User.id)).filter(User.is_admin == True).scalar()
+        
+        total_sessions = db.query(func.count(SessionModel.id)).scalar()
+        approved_sessions = db.query(func.count(SessionModel.id)).filter(
+            SessionModel.is_approved == True
+        ).scalar()
+        pending_sessions = total_sessions - approved_sessions
 
         total_attendances = db.query(func.count(SessionAttendance.id)).filter(
             SessionAttendance.attended == True
-        ).scalar() or 0
+        ).scalar()
 
-        avg_attendance = (total_attendances / approved_sessions) if approved_sessions > 0 else 0
+        avg_attendance = 0
+        if approved_sessions > 0:
+            avg_attendance = total_attendances / approved_sessions
 
         return {
             "status": "success",
@@ -597,7 +419,7 @@ async def get_analytics_dashboard(
                 "users": {
                     "total": total_users,
                     "active": active_users,
-                    "inactive": max(0, total_users - active_users),
+                    "inactive": total_users - active_users,
                     "admins": admin_count
                 },
                 "sessions": {
@@ -625,8 +447,11 @@ async def get_analytics_dashboard(
 @router.get("/roles")
 async def get_roles(
     db: Session = Depends(get_db),
-    current_user: Any = Depends(require_admin)
+    current_user: User = Depends(require_admin)
 ):
+    """
+    PRODUCTION: List all available roles and their permissions.
+    """
     return {
         "status": "success",
         "data": [
@@ -676,3 +501,14 @@ async def get_roles(
             }
         ]
     }
+
+
+# ============================================================================
+# NOTE: Include in main.py
+# ============================================================================
+# from app.routes import admin_routes
+# app.include_router(
+#     admin_routes.router,
+#     prefix="/api/v1/admin",
+#     tags=["Admin Management"]
+# )
