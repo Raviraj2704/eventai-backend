@@ -127,10 +127,15 @@ async def get_current_user_profile(
 
 
 # ============================================================================
-# UPDATE USER PROFILE
+# UPDATE USER PROFILE (Supports both PUT and POST /api/v1/users/me)
 # ============================================================================
 
 @router.put(
+    "/me",
+    response_model=UserUpdateResponse,
+    responses={400: {"model": ErrorResponse}, 401: {"model": ErrorResponse}}
+)
+@router.post(
     "/me",
     response_model=UserUpdateResponse,
     responses={400: {"model": ErrorResponse}, 401: {"model": ErrorResponse}}
@@ -308,7 +313,6 @@ def get_unique_designations(db: Session = Depends(get_db)):
     result = [
         desc[0] 
         for desc in designations 
-        for _ in [1]
         if desc[0] and desc[0].strip()
     ]
     
