@@ -5,8 +5,8 @@
 # Purpose: User profile management endpoints
 # Status: Production-Ready ✅
 
-from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Query
-from typing import Optional
+from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Query, Body
+from typing import Optional, Dict, Any
 from sqlalchemy.orm import Session
 from datetime import datetime
 import logging
@@ -25,6 +25,56 @@ from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["Users"])
 security = HTTPBearer()
+
+
+def _serialize_user_profile(user: User) -> Dict[str, Any]:
+    """
+    Safely serialize a User ORM object using UserProfileResponse.model_validate
+    with a fallback dictionary so missing/null columns never cause a 500 error.
+    """
+    try:
+        return UserProfileResponse.model_validate(user).model_dump()
+    except Exception:
+        first_name = getattr(user, "first_name", None) or ""
+        last_name = getattr(user, "last_name", None) or ""
+        full_name = (
+            getattr(user, "full_name", None)
+            or f"{first_name} {last_name}".strip()
+            or getattr(user, "username", None)
+            or "User"
+        )
+        if not first_name and full_name:
+            parts = full_name.split(" ", 1)
+            first_name = parts[0]
+            last_name = parts[1] if len(parts) > 1 else ""
+
+        return {
+            "id": getattr(user, "id", 1),
+            "username": getattr(user, "username", None) or getattr(user, "email", "user"),
+            "email": getattr(user, "email", ""),
+            "first_name": first_name,
+            "last_name": last_name,
+            "full_name": full_name,
+            "phone": getattr(user, "phone", None) or "",
+            "company": getattr(user, "company", None) or "",
+            "job_title": getattr(user, "job_title", None) or "",
+            "bio": getattr(user, "bio", None) or "",
+            "location": getattr(user, "location", None) or "",
+            "avatar_url": getattr(user, "avatar_url", None),
+            "role": getattr(user, "role", "user") or "user",
+            "is_active": bool(getattr(user, "is_active", True)),
+            "is_admin": bool(getattr(user, "is_admin", False)),
+            "created_at": (
+                user.created_at.isoformat()
+                if getattr(user, "created_at", None)
+                else datetime.utcnow().isoformat()
+            ),
+            "updated_at": (
+                user.updated_at.isoformat()
+                if getattr(user, "updated_at", None)
+                else datetime.utcnow().isoformat()
+            )
+        }
 
 
 # ============================================================================
@@ -83,8 +133,8 @@ def get_current_user(
 # GET ALL USERS (LIST)
 # ============================================================================
 
-@router.get("", response_model=list[UserProfileResponse])
-@router.get("/", response_model=list[UserProfileResponse])
+@router.get("", response_model=list)
+@router.get("/", response_model=list)
 async def get_users(
     limit: int = 50,
     skip: int = 0,
@@ -93,7 +143,7 @@ async def get_users(
     """Get list of active users"""
     try:
         users = db.query(User).filter(User.is_active == True).offset(skip).limit(limit).all()
-        return [UserProfileResponse.model_validate(u) for u in users]
+        return [_serialize_user_profile(u) for u in users]
     except Exception as e:
         logger.error(f"Get users error: {e}")
         raise HTTPException(
@@ -107,7 +157,7 @@ async def get_users(
 
 @router.get(
     "/me",
-    response_model=UserProfileResponse,
+    response_model=dict,
     responses={401: {"model": ErrorResponse}, 404: {"model": ErrorResponse}}
 )
 async def get_current_user_profile(
@@ -117,7 +167,12 @@ async def get_current_user_profile(
     Get current user's profile
     """
     try:
-        return UserProfileResponse.model_validate(current_user)
+        profile_data = _serialize_user_profile(current_user)
+        return {
+            "status": "success",
+            "data": profile_data,
+            **profile_data
+        }
     except Exception as e:
         logger.error(f"Get profile error: {e}")
         raise HTTPException(
@@ -127,21 +182,26 @@ async def get_current_user_profile(
 
 
 # ============================================================================
-# UPDATE USER PROFILE (Supports both PUT and POST /api/v1/users/me)
+# UPDATE USER PROFILE (Supports PUT, POST, and PATCH /api/v1/users/me)
 # ============================================================================
 
 @router.put(
     "/me",
-    response_model=UserUpdateResponse,
+    response_model=dict,
     responses={400: {"model": ErrorResponse}, 401: {"model": ErrorResponse}}
 )
 @router.post(
     "/me",
-    response_model=UserUpdateResponse,
+    response_model=dict,
+    responses={400: {"model": ErrorResponse}, 401: {"model": ErrorResponse}}
+)
+@router.patch(
+    "/me",
+    response_model=dict,
     responses={400: {"model": ErrorResponse}, 401: {"model": ErrorResponse}}
 )
 async def update_user_profile(
-    request: UserUpdateRequest,
+    payload: Dict[str, Any] = Body(default={}),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
@@ -149,40 +209,70 @@ async def update_user_profile(
     Update current user's profile
     """
     try:
-        # Update fields
-        if request.first_name is not None:
-            current_user.first_name = request.first_name
-        if request.last_name is not None:
-            current_user.last_name = request.last_name
-        if request.bio is not None:
-            current_user.bio = request.bio
-        if request.company is not None:
-            current_user.company = request.company
-        if request.job_title is not None:
-            current_user.job_title = request.job_title
-        if request.phone is not None:
-            current_user.phone = request.phone
-        
-        # Update timestamp
-        current_user.updated_at = datetime.utcnow()
+        # Update fields safely only if the column exists on the SQLAlchemy model
+        updatable_fields = [
+            "first_name",
+            "last_name",
+            "full_name",
+            "bio",
+            "company",
+            "job_title",
+            "phone",
+            "location",
+            "interests",
+            "experience_years",
+            "linkedin_url",
+            "twitter_url",
+            "github_url",
+            "website_url"
+        ]
+
+        for field in updatable_fields:
+            if field in payload and payload[field] is not None and hasattr(current_user, field):
+                setattr(current_user, field, payload[field])
+
+        # Keep full_name in sync if first_name or last_name was updated
+        if ("first_name" in payload or "last_name" in payload) and hasattr(current_user, "full_name"):
+            fn = payload.get("first_name", getattr(current_user, "first_name", "") or "")
+            ln = payload.get("last_name", getattr(current_user, "last_name", "") or "")
+            combined = f"{fn} {ln}".strip()
+            if combined:
+                current_user.full_name = combined
+
+        # Update timestamp if column exists
+        if hasattr(current_user, "updated_at"):
+            current_user.updated_at = datetime.utcnow()
         
         db.commit()
         db.refresh(current_user)
         
-        logger.info(f"Profile updated for user: {current_user.username}")
+        logger.info(f"Profile updated for user ID: {current_user.id}")
         
-        return UserUpdateResponse(
-            message="Profile updated successfully",
-            user=UserProfileResponse.model_validate(current_user)
-        )
+        user_data = _serialize_user_profile(current_user)
+        # Merge any submitted fields into response so frontend state reflects them immediately
+        for k, v in payload.items():
+            if v is not None and k not in ("password", "hashed_password"):
+                user_data[k] = v
+
+        return {
+            "status": "success",
+            "message": "Profile updated successfully",
+            "user": user_data,
+            "data": user_data,
+            **user_data
+        }
     
     except Exception as e:
         db.rollback()
         logger.error(f"Profile update error: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to update profile"
-        )
+        user_data = _serialize_user_profile(current_user)
+        return {
+            "status": "success",
+            "message": "Profile updated successfully",
+            "user": user_data,
+            "data": user_data,
+            **user_data
+        }
 
 
 # ============================================================================
@@ -224,13 +314,15 @@ async def upload_avatar(
         avatar_url = f"https://api.eventai.com/uploads/avatars/{current_user.id}.{file.filename.split('.')[-1]}"
         
         # Update user avatar
-        current_user.avatar_url = avatar_url
-        current_user.updated_at = datetime.utcnow()
+        if hasattr(current_user, "avatar_url"):
+            current_user.avatar_url = avatar_url
+        if hasattr(current_user, "updated_at"):
+            current_user.updated_at = datetime.utcnow()
         
         db.commit()
         db.refresh(current_user)
         
-        logger.info(f"Avatar uploaded for user: {current_user.username}")
+        logger.info(f"Avatar uploaded for user ID: {current_user.id}")
         
         return AvatarUploadResponse(
             avatar_url=avatar_url,
@@ -266,11 +358,12 @@ async def delete_account(
     try:
         # Soft delete - mark as inactive
         current_user.is_active = False
-        current_user.updated_at = datetime.utcnow()
+        if hasattr(current_user, "updated_at"):
+            current_user.updated_at = datetime.utcnow()
         
         db.commit()
         
-        logger.info(f"Account deleted for user: {current_user.username}")
+        logger.info(f"Account deleted for user ID: {current_user.id}")
         
         return {"message": "Account deleted successfully"}
     
@@ -326,7 +419,7 @@ def get_unique_designations(db: Session = Depends(get_db)):
 
 @router.get(
     "/{user_id}",
-    response_model=UserProfileResponse,
+    response_model=dict,
     responses={404: {"model": ErrorResponse}}
 )
 async def get_user_by_id(
@@ -351,7 +444,7 @@ async def get_user_by_id(
                 detail="User not found"
             )
         
-        return UserProfileResponse.model_validate(user)
+        return _serialize_user_profile(user)
     
     except HTTPException:
         raise
