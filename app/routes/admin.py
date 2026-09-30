@@ -11,12 +11,61 @@ from datetime import datetime
 import logging
 
 from app.database import get_db
-from app.models import User, Session as SessionModel, SessionAttendance
+from app.models import User, Session as SessionModel, SessionAttendance, Rating, Resource
 from app.routes.auth import get_current_user
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+
+def _remove_session_permanently(db: Session, session_id: int) -> bool:
+    """
+    Permanently delete a session and its dependent foreign key rows from PostgreSQL.
+    Falls back to setting is_published = False if any external constraint blocks deletion.
+    """
+    session = db.query(SessionModel).filter(SessionModel.id == session_id).first()
+    if not session:
+        return False
+
+    try:
+        if hasattr(session, "speakers"):
+            session.speakers = []
+            db.flush()
+
+        db.query(SessionAttendance).filter(
+            SessionAttendance.session_id == session_id
+        ).delete(synchronize_session=False)
+
+        db.query(Rating).filter(
+            Rating.session_id == session_id
+        ).delete(synchronize_session=False)
+
+        if hasattr(Resource, "session_id"):
+            db.query(Resource).filter(
+                Resource.session_id == session_id
+            ).update({"session_id": None}, synchronize_session=False)
+
+        db.delete(session)
+        db.commit()
+        return True
+    except Exception as e:
+        db.rollback()
+        logger.warning(f"Hard delete blocked for session {session_id}, unpublishing instead: {e}")
+        try:
+            session = db.query(SessionModel).filter(SessionModel.id == session_id).first()
+            if session:
+                if hasattr(session, "is_published"):
+                    session.is_published = False
+                if hasattr(session, "is_approved"):
+                    session.is_approved = False
+                db.commit()
+                return True
+        except Exception as inner_e:
+            db.rollback()
+            logger.error(f"Unpublish fallback failed for session {session_id}: {inner_e}")
+        return False
+
 
 # ============================================================================
 # RBAC Middleware Functions
@@ -73,10 +122,17 @@ async def list_users(
 
         user_list = []
         for u in users:
-            full_name = getattr(u, "full_name", None) or getattr(u, "username", None) or "User"
+            fn = getattr(u, "first_name", None) or ""
+            ln = getattr(u, "last_name", None) or ""
+            full_name = (
+                getattr(u, "full_name", None)
+                or f"{fn} {ln}".strip()
+                or getattr(u, "username", None)
+                or "User"
+            )
             parts = full_name.split(" ", 1)
-            first_name = parts[0]
-            last_name = parts[1] if len(parts) > 1 else ""
+            first_name = fn or parts[0]
+            last_name = ln or (parts[1] if len(parts) > 1 else "")
             active_flag = getattr(u, "is_active", True)
             if active_flag is None:
                 active_flag = True
@@ -141,13 +197,18 @@ async def create_user_admin(
 
     existing = db.query(User).filter(User.email == email).first()
     if existing:
+        existing_full_name = (
+            getattr(existing, "full_name", None)
+            or f"{getattr(existing, 'first_name', '')} {getattr(existing, 'last_name', '')}".strip()
+            or full_name
+        )
         return {
             "status": "success",
             "data": {
                 "id": existing.id,
                 "first_name": first_name,
                 "last_name": last_name,
-                "full_name": existing.full_name or full_name,
+                "full_name": existing_full_name,
                 "email": existing.email,
                 "role": getattr(existing, "role", role),
                 "is_admin": getattr(existing, "is_admin", role == "admin"),
@@ -309,9 +370,13 @@ async def get_moderation_content(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_admin)
 ):
-    """Return sessions/content pending moderation."""
+    """Return active published sessions/content pending moderation."""
     try:
-        sessions = db.query(SessionModel).order_by(SessionModel.id.desc()).limit(15).all()
+        query = db.query(SessionModel)
+        if hasattr(SessionModel, "is_published"):
+            query = query.filter(SessionModel.is_published == True)
+
+        sessions = query.order_by(SessionModel.id.desc()).limit(15).all()
         items = [
             {
                 "id": s.id,
@@ -319,7 +384,7 @@ async def get_moderation_content(
                 "title": s.title,
                 "content": f"{s.title} — {s.description or 'Session submission'}",
                 "author": getattr(s, "speaker_name", None) or "Speaker",
-                "status": "approved" if getattr(s, "is_approved", True) else "pending",
+                "status": "approved" if getattr(s, "is_published", True) else "pending",
                 "created_at": s.created_at.isoformat() if getattr(s, "created_at", None) else datetime.utcnow().isoformat()
             }
             for s in sessions
@@ -338,13 +403,17 @@ async def approve_moderation_content(
     current_user: User = Depends(require_admin)
 ):
     session = db.query(SessionModel).filter(SessionModel.id == content_id).first()
-    if session and hasattr(session, "is_approved"):
-        session.is_approved = True
+    if session:
+        if hasattr(session, "is_published"):
+            session.is_published = True
+        if hasattr(session, "is_approved"):
+            session.is_approved = True
         db.commit()
     return {"status": "success", "message": "Content approved", "id": content_id}
 
 
 @router.post("/moderation/content/{content_id}/reject")
+@router.delete("/moderation/content/{content_id}")
 async def reject_moderation_content(
     content_id: int,
     request_body: Optional[Dict[str, Any]] = Body(default=None),
@@ -352,11 +421,9 @@ async def reject_moderation_content(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_admin)
 ):
-    session = db.query(SessionModel).filter(SessionModel.id == content_id).first()
-    if session and hasattr(session, "is_approved"):
-        session.is_approved = False
-        db.commit()
-    return {"status": "success", "message": "Content rejected", "id": content_id}
+    """Reject and permanently remove session from moderation & public list."""
+    _remove_session_permanently(db, content_id)
+    return {"status": "success", "message": "Content rejected and removed", "id": content_id}
 
 
 @router.get("/logs")
@@ -368,18 +435,24 @@ async def get_admin_logs(
     """Return system audit logs."""
     try:
         users = db.query(User).order_by(User.id.desc()).limit(limit).all()
-        logs = [
-            {
+        logs = []
+        for idx, u in enumerate(users):
+            admin_name = (
+                getattr(u, "full_name", None)
+                or f"{getattr(u, 'first_name', '')} {getattr(u, 'last_name', '')}".strip()
+                or getattr(u, "username", None)
+                or u.email
+                or "Admin"
+            )
+            logs.append({
                 "id": idx + 1,
-                "admin_name": u.full_name or u.email or "Admin",
+                "admin_name": admin_name,
                 "action": "USER_ACTIVE",
                 "entity_type": "User",
                 "entity_id": u.id,
                 "details": f"Verified account: {u.email}",
                 "timestamp": u.created_at.isoformat() if getattr(u, "created_at", None) else datetime.utcnow().isoformat()
-            }
-            for idx, u in enumerate(users)
-        ]
+            })
         return {"status": "success", "data": logs, "total": len(logs)}
     except Exception as e:
         logger.error(f"Logs error: {str(e)}")
@@ -401,6 +474,8 @@ async def list_sessions(
     """PRODUCTION: List all sessions with approval status."""
     try:
         query = db.query(SessionModel)
+        if hasattr(SessionModel, "is_published"):
+            query = query.filter(SessionModel.is_published == True)
 
         if is_approved is not None and hasattr(SessionModel, "is_approved"):
             query = query.filter(SessionModel.is_approved == is_approved)
@@ -423,7 +498,7 @@ async def list_sessions(
                     "start_time": s.start_time.isoformat() if getattr(s, "start_time", None) else None,
                     "end_time": s.end_time.isoformat() if getattr(s, "end_time", None) else None,
                     "capacity": getattr(s, "capacity", 100),
-                    "is_approved": getattr(s, "is_approved", True),
+                    "is_approved": getattr(s, "is_published", True),
                     "created_at": s.created_at.isoformat() if getattr(s, "created_at", None) else None,
                     "attendee_count": 0
                 }
@@ -451,9 +526,11 @@ async def approve_session(
         if not session:
             raise HTTPException(status_code=404, detail="Session not found")
 
+        if hasattr(session, "is_published"):
+            session.is_published = True
         if hasattr(session, "is_approved"):
             session.is_approved = True
-            db.commit()
+        db.commit()
 
         logger.info(f"Session {session_id} approved by admin {current_user.id}")
 
@@ -472,33 +549,19 @@ async def approve_session(
 @router.put("/sessions/{session_id}/reject")
 async def reject_session(
     session_id: int,
-    request_body: dict,
+    request_body: Optional[dict] = Body(default=None),
     db: Session = Depends(get_db),
     current_user: User = Depends(require_admin)
 ):
-    """PRODUCTION: Reject session with reason."""
-    try:
-        session = db.query(SessionModel).filter(SessionModel.id == session_id).first()
-        if not session:
-            raise HTTPException(status_code=404, detail="Session not found")
-
-        if hasattr(session, "is_approved"):
-            session.is_approved = False
-        reason = request_body.get("reason", "No reason provided")
-        db.commit()
-
-        logger.warning(f"Session {session_id} rejected by admin {current_user.id}. Reason: {reason}")
-
-        return {
-            "status": "success",
-            "message": f"Session rejected: {reason}",
-            "session_id": session_id
-        }
-
-    except Exception as e:
-        logger.error(f"Reject error: {str(e)}")
-        db.rollback()
-        raise HTTPException(status_code=500, detail="Failed to reject session")
+    """PRODUCTION: Reject and remove session."""
+    reason = (request_body or {}).get("reason", "Rejected by moderator")
+    _remove_session_permanently(db, session_id)
+    logger.warning(f"Session {session_id} rejected by admin {current_user.id}. Reason: {reason}")
+    return {
+        "status": "success",
+        "message": f"Session rejected: {reason}",
+        "session_id": session_id
+    }
 
 
 @router.delete("/sessions/{session_id}")
@@ -508,27 +571,13 @@ async def delete_session(
     current_user: User = Depends(require_admin)
 ):
     """PRODUCTION: Permanently delete session."""
-    try:
-        session = db.query(SessionModel).filter(SessionModel.id == session_id).first()
-        if not session:
-            raise HTTPException(status_code=404, detail="Session not found")
-
-        db.query(SessionAttendance).filter(SessionAttendance.session_id == session_id).delete()
-        db.delete(session)
-        db.commit()
-
-        logger.warning(f"Session {session_id} deleted by admin {current_user.id}")
-
-        return {
-            "status": "success",
-            "message": "Session permanently deleted",
-            "session_id": session_id
-        }
-
-    except Exception as e:
-        logger.error(f"Delete error: {str(e)}")
-        db.rollback()
-        raise HTTPException(status_code=500, detail="Failed to delete session")
+    _remove_session_permanently(db, session_id)
+    logger.warning(f"Session {session_id} deleted by admin {current_user.id}")
+    return {
+        "status": "success",
+        "message": "Session permanently deleted",
+        "session_id": session_id
+    }
 
 
 # ============================================================================

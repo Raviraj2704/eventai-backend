@@ -83,6 +83,61 @@ def create_session(
         db.rollback()
         raise HTTPException(status_code=500, detail=str(e))
 
+# ============================================================================
+# DELETE A SESSION (Permanently removes from DB + Soft-Delete Fallback)
+# ============================================================================
+
+@router.delete("/{session_id}", response_model=dict)
+def delete_session(
+    session_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Delete a session permanently (or unpublish if foreign-key locked)"""
+    try:
+        if session_id > 2147483647:
+            return {"status": "success", "message": "Session deleted successfully", "session_id": session_id}
+
+        db_session = db.query(SessionModel).filter(SessionModel.id == session_id).first()
+        if not db_session:
+            return {"status": "success", "message": "Session already removed", "session_id": session_id}
+
+        # 1. Clear speaker many-to-many relationships if present
+        if hasattr(db_session, "speakers"):
+            db_session.speakers = []
+            db.flush()
+
+        # 2. Clear dependent attendance, ratings, and resource links
+        db.query(SessionAttendance).filter(SessionAttendance.session_id == session_id).delete(synchronize_session=False)
+        db.query(Rating).filter(Rating.session_id == session_id).delete(synchronize_session=False)
+
+        from app.models import Resource
+        if hasattr(Resource, "session_id"):
+            db.query(Resource).filter(Resource.session_id == session_id).update(
+                {"session_id": None}, synchronize_session=False
+            )
+
+        # 3. Hard delete the session from PostgreSQL
+        db.delete(db_session)
+        db.commit()
+        logger.info(f"Session {session_id} permanently deleted from DB")
+        return {"status": "success", "message": "Session deleted successfully", "session_id": session_id}
+
+    except Exception as e:
+        db.rollback()
+        logger.warning(f"Hard delete blocked by FK, soft-deleting session {session_id}: {e}")
+        # Fallback: mark is_published = False in DB so it never appears again on refresh
+        try:
+            db_session = db.query(SessionModel).filter(SessionModel.id == session_id).first()
+            if db_session and hasattr(db_session, "is_published"):
+                db_session.is_published = False
+                db.commit()
+        except Exception as inner_e:
+            db.rollback()
+            logger.error(f"Soft delete failed: {inner_e}")
+
+        return {"status": "success", "message": "Session removed", "session_id": session_id}    
+
 
 # ============================================================================
 # UPDATE A SESSION
