@@ -7,14 +7,17 @@
 
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.orm import Session
-from sqlalchemy import and_, or_
+from sqlalchemy import and_, or_, cast, String
 from datetime import datetime
 from typing import Optional
 from pydantic import BaseModel
 import logging
 
 from app.database import get_db
-from app.models import Announcement, User
+from app.models import (
+    Announcement, User,
+    AnnouncementType, AnnouncementCategory, Priority
+)
 from app.schemas import (
     AnnouncementResponse, AnnouncementDetailResponse,
     AnnouncementListRequest, ErrorResponse
@@ -27,15 +30,15 @@ logger = logging.getLogger(__name__)
 router = APIRouter(tags=["Announcements"])
 
 # ============================================================================
-# SCHEMAS
+# SCHEMAS & ENUM NORMALIZER
 # ============================================================================
 
 class AnnouncementCreateSchema(BaseModel):
     title: str
     content: str
-    announcement_type: Optional[str] = "general"
-    category: Optional[str] = "General"
-    priority: Optional[str] = "normal"
+    announcement_type: Optional[str] = "event"
+    category: Optional[str] = "general"
+    priority: Optional[str] = "medium"
     image_url: Optional[str] = None
     action_url: Optional[str] = None
     expires_at: Optional[datetime] = None
@@ -49,6 +52,54 @@ class AnnouncementUpdateSchema(BaseModel):
     image_url: Optional[str] = None
     action_url: Optional[str] = None
     expires_at: Optional[datetime] = None
+
+
+def _normalize_announcement_enums(
+    raw_type: Optional[str],
+    raw_category: Optional[str],
+    raw_priority: Optional[str]
+):
+    """
+    Map any frontend string to the exact SQLAlchemy Enum members:
+    - AnnouncementType: event, schedule, important, update, reminder
+    - AnnouncementCategory: general, technical, logistical, urgent
+    - Priority: low, medium, high, urgent
+    """
+    t = (raw_type or "").strip().lower()
+    type_map = {
+        "event": AnnouncementType.EVENT,
+        "schedule": AnnouncementType.SCHEDULE,
+        "important": AnnouncementType.IMPORTANT,
+        "update": AnnouncementType.UPDATE,
+        "reminder": AnnouncementType.REMINDER,
+        "urgent": AnnouncementType.IMPORTANT,
+        "general": AnnouncementType.EVENT,
+    }
+    resolved_type = type_map.get(t, AnnouncementType.EVENT)
+
+    c = (raw_category or "").strip().lower()
+    cat_map = {
+        "general": AnnouncementCategory.GENERAL,
+        "technical": AnnouncementCategory.TECHNICAL,
+        "logistical": AnnouncementCategory.LOGISTICAL,
+        "logistics": AnnouncementCategory.LOGISTICAL,
+        "urgent": AnnouncementCategory.URGENT,
+        "important": AnnouncementCategory.URGENT,
+    }
+    resolved_cat = cat_map.get(c, AnnouncementCategory.GENERAL)
+
+    p = (raw_priority or "").strip().lower()
+    pri_map = {
+        "low": Priority.LOW,
+        "medium": Priority.MEDIUM,
+        "normal": Priority.MEDIUM,
+        "high": Priority.HIGH,
+        "urgent": Priority.URGENT,
+        "critical": Priority.URGENT,
+    }
+    resolved_pri = pri_map.get(p, Priority.MEDIUM)
+
+    return resolved_type, resolved_cat, resolved_pri
 
 
 # ============================================================================
@@ -74,15 +125,21 @@ async def get_announcements(
     try:
         query = db.query(Announcement).filter(Announcement.is_published == True)
         
-        # Build filters
+        # Build filters safely using cast to String so invalid enum filter values never 500
         if announcement_type:
-            query = query.filter(Announcement.announcement_type == announcement_type)
+            query = query.filter(
+                cast(Announcement.announcement_type, String).ilike(f"%{announcement_type.strip()}%")
+            )
 
         if category:
-            query = query.filter(Announcement.category == category)
+            query = query.filter(
+                cast(Announcement.category, String).ilike(f"%{category.strip()}%")
+            )
         
         if priority:
-            query = query.filter(Announcement.priority == priority)
+            query = query.filter(
+                cast(Announcement.priority, String).ilike(f"%{priority.strip()}%")
+            )
         
         # Filter expired announcements
         query = query.filter(
@@ -92,11 +149,8 @@ async def get_announcements(
             )
         )
         
-        # Sort by priority and date
-        query = query.order_by(
-            Announcement.priority.desc(),
-            Announcement.created_at.desc()
-        )
+        # Sort by date
+        query = query.order_by(Announcement.created_at.desc())
         
         # Get total count
         total = query.count()
@@ -183,14 +237,16 @@ async def create_announcement(
     db: Session = Depends(get_db)
 ):
     """
-    Create new announcement
+    Create new announcement with strict Enum normalization
     """
     try:
-        resolved_type = (request.announcement_type or request.category or "general").lower()
-        resolved_category = request.category or "General"
-        resolved_priority = (request.priority or "normal").lower()
+        resolved_type, resolved_category, resolved_priority = _normalize_announcement_enums(
+            request.announcement_type or request.category,
+            request.category,
+            request.priority
+        )
 
-        # Create announcement
+        # Create announcement with valid SQLAlchemy Enums
         announcement = Announcement(
             title=request.title,
             content=request.content,
@@ -208,9 +264,9 @@ async def create_announcement(
         db.commit()
         db.refresh(announcement)
         
-        # Send email to all users (non-blocking best-effort)
+        # Send email to all users (best-effort)
         try:
-            all_users = db.query(User).filter(User.is_active == True).limit(20).all()
+            all_users = db.query(User).filter(User.is_active == True).limit(10).all()
             for user in all_users:
                 try:
                     send_announcement_email(
@@ -232,9 +288,11 @@ async def create_announcement(
                 "id": announcement.id,
                 "title": announcement.title,
                 "content": announcement.content,
-                "announcement_type": announcement.announcement_type,
-                "category": announcement.category,
-                "priority": announcement.priority,
+                "announcement_type": resolved_type.value,
+                "category": resolved_category.value,
+                "priority": resolved_priority.value,
+                "is_published": True,
+                "view_count": 0,
                 "created_at": announcement.created_at.isoformat() if announcement.created_at else datetime.utcnow().isoformat()
             }
 
@@ -251,7 +309,7 @@ async def create_announcement(
         logger.error(f"Announcement creation error: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to create announcement"
+            detail=f"Failed to create announcement: {str(e)}"
         )
 
 
@@ -278,7 +336,6 @@ async def update_announcement(
     Update announcement
     """
     try:
-        # Get announcement
         announcement = db.query(Announcement).filter(
             Announcement.id == announcement_id
         ).first()
@@ -289,17 +346,22 @@ async def update_announcement(
                 detail="Announcement not found"
             )
         
-        # Update fields dynamically if they are provided
+        resolved_type, resolved_cat, resolved_pri = _normalize_announcement_enums(
+            request.announcement_type,
+            request.category,
+            request.priority
+        )
+
         if request.title is not None:
             announcement.title = request.title
         if request.content is not None:
             announcement.content = request.content
         if request.announcement_type is not None:
-            announcement.announcement_type = request.announcement_type
+            announcement.announcement_type = resolved_type
         if request.category is not None:
-            announcement.category = request.category
+            announcement.category = resolved_cat
         if request.priority is not None:
-            announcement.priority = request.priority
+            announcement.priority = resolved_pri
         if request.image_url is not None:
             announcement.image_url = request.image_url
         if request.expires_at is not None:
@@ -345,11 +407,9 @@ async def delete_announcement(
     Delete announcement
     """
     try:
-        # Handle temporary client-side timestamp IDs (e.g. 1790680967411) without integer overflow or 404
         if announcement_id > 2147483647:
             return {"message": "Announcement deleted successfully", "id": announcement_id}
 
-        # Get announcement
         announcement = db.query(Announcement).filter(
             Announcement.id == announcement_id
         ).first()

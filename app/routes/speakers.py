@@ -7,11 +7,12 @@
 
 from fastapi import APIRouter, Depends, HTTPException, status, Query, Body
 from sqlalchemy.orm import Session
-from sqlalchemy import and_, or_
+from sqlalchemy import and_, or_, cast, String
 from datetime import datetime
 from typing import Optional, List, Dict, Any
 from pydantic import BaseModel
 import logging
+import json
 
 from app.database import get_db
 from app.models import (
@@ -37,11 +38,31 @@ class SpeakerRatingSchema(BaseModel):
     feedback: Optional[str] = None
 
 
+def _normalize_expertise_list(raw_exp: Any) -> List[str]:
+    """
+    Ensure expertise is ALWAYS returned as a list of strings (Array)
+    so frontend .map() or .slice() calls never throw a TypeError.
+    """
+    if isinstance(raw_exp, list):
+        return [str(item).strip() for item in raw_exp if str(item).strip()]
+    if isinstance(raw_exp, str):
+        trimmed = raw_exp.strip()
+        if not trimmed:
+            return ["AI & Machine Learning"]
+        if trimmed.startswith("[") and trimmed.endswith("]"):
+            try:
+                parsed = json.loads(trimmed)
+                if isinstance(parsed, list):
+                    return [str(x).strip() for x in parsed if str(x).strip()]
+            except Exception:
+                pass
+        return [part.strip() for part in trimmed.split(",") if part.strip()]
+    return ["AI & Machine Learning"]
+
+
 def _serialize_speaker(speaker: Speaker, detail: bool = False) -> Dict[str, Any]:
     """
-    Safely serialize a Speaker ORM object using Pydantic v2 model_validate
-    with a comprehensive dictionary fallback so missing user relations or
-    columns never cause a 500 error.
+    Safely serialize a Speaker ORM object ensuring expertise is always an Array.
     """
     user = getattr(speaker, "user", None)
     first_name = (
@@ -82,7 +103,13 @@ def _serialize_speaker(speaker: Speaker, detail: bool = False) -> Dict[str, Any]
         or (getattr(user, "bio", None) if user else None)
         or ""
     )
-    expertise = getattr(speaker, "expertise", None) or getattr(speaker, "specialization", None) or "AI & Machine Learning"
+    raw_expertise = (
+        getattr(speaker, "expertise", None)
+        or getattr(speaker, "specialization", None)
+        or ["AI & Machine Learning"]
+    )
+    expertise_list = _normalize_expertise_list(raw_expertise)
+
     avatar_url = (
         getattr(speaker, "avatar_url", None)
         or getattr(speaker, "photo_url", None)
@@ -101,7 +128,8 @@ def _serialize_speaker(speaker: Speaker, detail: bool = False) -> Dict[str, Any]
         "job_title": job_title,
         "company": company,
         "bio": bio,
-        "expertise": expertise,
+        "expertise": expertise_list,
+        "specialization": ", ".join(expertise_list),
         "avatar_url": avatar_url,
         "photo_url": avatar_url,
         "twitter_url": getattr(speaker, "twitter_url", None) or getattr(speaker, "twitter", None),
@@ -121,7 +149,9 @@ def _serialize_speaker(speaker: Speaker, detail: bool = False) -> Dict[str, Any]
     try:
         schema_cls = SpeakerDetailResponse if detail else SpeakerResponse
         validated = schema_cls.model_validate(speaker).model_dump()
-        return {**base_dict, **validated}
+        merged = {**base_dict, **validated}
+        merged["expertise"] = _normalize_expertise_list(merged.get("expertise"))
+        return merged
     except Exception:
         return base_dict
 
@@ -154,7 +184,7 @@ async def get_speakers(
             query = query.filter(Speaker.company.ilike(f"%{company}%"))
 
         if expertise and hasattr(Speaker, "expertise"):
-            query = query.filter(Speaker.expertise.ilike(f"%{expertise}%"))
+            query = query.filter(cast(Speaker.expertise, String).ilike(f"%{expertise}%"))
 
         if featured_only and hasattr(Speaker, "is_featured"):
             query = query.filter(Speaker.is_featured == True)
@@ -170,7 +200,7 @@ async def get_speakers(
             if hasattr(Speaker, "name"):
                 search_filters.append(Speaker.name.ilike(f"%{search}%"))
             if hasattr(Speaker, "expertise"):
-                search_filters.append(Speaker.expertise.ilike(f"%{search}%"))
+                search_filters.append(cast(Speaker.expertise, String).ilike(f"%{search}%"))
             if search_filters:
                 query = query.filter(or_(*search_filters))
 
@@ -228,7 +258,6 @@ async def get_speaker_by_id(
 
         data = _serialize_speaker(speaker, detail=True)
 
-        # Include speaker's sessions if available
         sessions_list = []
         if hasattr(speaker, "sessions") and speaker.sessions:
             sessions_list = [
@@ -254,7 +283,7 @@ async def get_speaker_by_id(
 
 
 # ============================================================================
-# CREATE SPEAKER (Fixes 422 Unprocessable Content on POST /api/v1/speakers)
+# CREATE SPEAKER
 # ============================================================================
 
 @router.post(
@@ -274,7 +303,7 @@ async def create_speaker(
     db: Session = Depends(get_db)
 ):
     """
-    Create a new speaker profile (accepts flexible frontend payload without 422 errors)
+    Create a new speaker profile (ensures expertise is always returned as an Array)
     """
     first_name = (payload.get("first_name") or "").strip()
     last_name = (payload.get("last_name") or "").strip()
@@ -292,13 +321,14 @@ async def create_speaker(
     job_title = payload.get("title") or payload.get("job_title") or "AI Researcher & Speaker"
     company = payload.get("company") or "NextGen AI"
     bio = payload.get("bio") or payload.get("description") or f"{full_name} is a speaker at {company}."
-    expertise = payload.get("expertise") or payload.get("specialization") or "Artificial Intelligence"
+    raw_exp = payload.get("expertise") or payload.get("specialization") or "Artificial Intelligence"
+    expertise_list = _normalize_expertise_list(raw_exp)
+    expertise_str = ", ".join(expertise_list)
     avatar_url = payload.get("avatar_url") or payload.get("photo_url") or payload.get("image_url")
 
     try:
         speaker_kwargs: Dict[str, Any] = {}
 
-        # Populate only columns that exist on the SQLAlchemy Speaker model
         field_candidates = {
             "name": full_name,
             "full_name": full_name,
@@ -308,8 +338,8 @@ async def create_speaker(
             "job_title": job_title,
             "company": company,
             "bio": bio,
-            "expertise": expertise,
-            "specialization": expertise,
+            "expertise": expertise_str,
+            "specialization": expertise_str,
             "avatar_url": avatar_url,
             "photo_url": avatar_url,
             "twitter_url": payload.get("twitter_url") or payload.get("twitter"),
@@ -323,7 +353,6 @@ async def create_speaker(
             if hasattr(Speaker, col_name) and col_val is not None:
                 speaker_kwargs[col_name] = col_val
 
-        # If Speaker requires a unique user_id foreign key, link or create a User record
         if hasattr(Speaker, "user_id"):
             existing_speaker_for_user = db.query(Speaker).filter(
                 Speaker.user_id == current_user.id
@@ -346,7 +375,7 @@ async def create_speaker(
             "job_title": job_title,
             "company": company,
             "bio": bio,
-            "expertise": expertise
+            "expertise": expertise_list
         })
 
         return {
@@ -369,7 +398,7 @@ async def create_speaker(
             "job_title": job_title,
             "company": company,
             "bio": bio,
-            "expertise": expertise,
+            "expertise": expertise_list,
             "avatar_url": avatar_url,
             "average_rating": 5.0,
             "total_ratings": 1,
@@ -408,9 +437,13 @@ async def update_speaker(
                 detail="Speaker not found"
             )
 
-        for key in ["name", "full_name", "first_name", "last_name", "title", "job_title", "company", "bio", "expertise", "avatar_url"]:
+        for key in ["name", "full_name", "first_name", "last_name", "title", "job_title", "company", "bio", "avatar_url"]:
             if key in payload and payload[key] is not None and hasattr(speaker, key):
                 setattr(speaker, key, payload[key])
+
+        if "expertise" in payload and payload["expertise"] is not None and hasattr(speaker, "expertise"):
+            exp_list = _normalize_expertise_list(payload["expertise"])
+            speaker.expertise = ", ".join(exp_list)
 
         db.commit()
         db.refresh(speaker)
@@ -433,7 +466,7 @@ async def update_speaker(
 
 
 # ============================================================================
-# DELETE SPEAKER (Fixes 405 Method Not Allowed on DELETE /api/v1/speakers/{id})
+# DELETE SPEAKER
 # ============================================================================
 
 @router.delete(
@@ -449,7 +482,6 @@ async def delete_speaker(
     Delete a speaker profile and clean up dependent references
     """
     try:
-        # Handle client-side generated timestamp IDs gracefully
         if speaker_id > 2147483647:
             return {
                 "status": "success",
@@ -465,7 +497,6 @@ async def delete_speaker(
                 "speaker_id": speaker_id
             }
 
-        # Clean up speaker ratings or session references if they exist
         if hasattr(Rating, "speaker_id"):
             db.query(Rating).filter(Rating.speaker_id == speaker_id).delete(synchronize_session=False)
         if hasattr(SessionModel, "speaker_id"):
@@ -494,7 +525,7 @@ async def delete_speaker(
 
 
 # ============================================================================
-# FOLLOW / UNFOLLOW SPEAKER (Fixes 404 Not Found on POST /speakers/{id}/follow)
+# FOLLOW / UNFOLLOW SPEAKER
 # ============================================================================
 
 @router.post(
