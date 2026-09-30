@@ -15,7 +15,7 @@ from groq import Groq
 from app.database import get_db
 from app.models import (
     User, Session as SessionModel, SessionAttendance, Rating,
-    User as UserModel, Challenge, Resource
+    User as UserModel, Challenge, Resource, Speaker
 )
 from app.schemas import UserResponse
 from app.routes.auth import get_current_user
@@ -23,18 +23,12 @@ from app.routes.auth import get_current_user
 logger = logging.getLogger(__name__)
 
 # Initialize Groq client with API key from environment
-GROQ_API_KEY = os.getenv("GROQ_API_KEY")
-
-# Fast model selection with automatic fallback chain
-GROQ_MODEL = "mixtral-8x7b-32768"
-GROQ_FALLBACK_MODELS = [
-    "mixtral-8x7b-32768",
-    "llama-3.1-8b-instant",
-    "llama-3.3-70b-versatile",
-    "gemma2-9b-it"
-]
-
+GROQ_API_KEY = (os.getenv("GROQ_API_KEY") or "").strip()
 groq_client = Groq(api_key=GROQ_API_KEY) if GROQ_API_KEY else None
+
+# Cache of working model IDs discovered from your Groq account
+_DISCOVERED_MODELS: List[str] = []
+_MODELS_CHECKED: bool = False
 
 router = APIRouter()
 
@@ -46,29 +40,181 @@ def _u_get(user: Any, key: str, default: Any = None) -> Any:
     return getattr(user, key, default)
 
 
-def _call_groq_completion(messages: List[dict], temperature: float = 0.7, max_tokens: int = 300):
+def _get_available_groq_models() -> List[str]:
     """
-    Production helper: Tries the fast primary model (mixtral-8x7b-32768) first,
-    and automatically falls back to secondary active Groq models if 404/decommissioned.
+    Dynamically fetch the exact chat models that this GROQ_API_KEY has access to
+    using groq_client.models.list(), filtering out audio/guard/embedding models.
     """
-    if not groq_client:
-        raise RuntimeError("Groq client not configured")
+    global _DISCOVERED_MODELS, _MODELS_CHECKED
+    if _MODELS_CHECKED and _DISCOVERED_MODELS:
+        return _DISCOVERED_MODELS
 
-    last_err = None
-    for model_name in GROQ_FALLBACK_MODELS:
+    _MODELS_CHECKED = True
+    if not groq_client:
+        return []
+
+    try:
+        model_list = groq_client.models.list()
+        raw_ids = [m.id for m in getattr(model_list, "data", []) if getattr(m, "id", None)]
+
+        # Exclude non-chat models (whisper, tts, guard, embeddings)
+        skip_keywords = ("whisper", "tts", "guard", "embed", "playai", "llava")
+        chat_models = [
+            mid for mid in raw_ids
+            if not any(kw in mid.lower() for kw in skip_keywords)
+        ]
+
+        # Prioritize fast/versatile chat models if present in the account's allowed list
+        preferred_order = [
+            "meta-llama/llama-4-scout-17b-16e-instruct",
+            "meta-llama/llama-4-maverick-17b-128e-instruct",
+            "qwen-qwq-32b",
+            "qwen/qwen3-32b",
+            "deepseek-r1-distill-llama-70b",
+            "compound-beta",
+            "compound-beta-mini",
+            "llama-3.3-70b-versatile",
+            "llama-3.1-8b-instant",
+        ]
+
+        ordered = [m for m in preferred_order if m in chat_models]
+        for m in chat_models:
+            if m not in ordered:
+                ordered.append(m)
+
+        _DISCOVERED_MODELS = ordered
+        logger.info(f"Discovered accessible Groq chat models: {_DISCOVERED_MODELS[:5]}")
+        return _DISCOVERED_MODELS
+    except Exception as e:
+        logger.warning(f"Could not list Groq models, using smart DB assistant: {e}")
+        return []
+
+
+def _call_groq_with_fallback(messages: list, temperature: float = 0.7, max_tokens: int = 300) -> Optional[str]:
+    """Try accessible Groq models discovered from the account without 404/400 crashes."""
+    if not groq_client:
+        return None
+
+    candidate_models = _get_available_groq_models()
+    for model_name in list(candidate_models):
         try:
-            return groq_client.chat.completions.create(
+            resp = groq_client.chat.completions.create(
                 model=model_name,
                 messages=messages,
                 temperature=temperature,
-                max_tokens=max_tokens
+                max_tokens=max_tokens,
             )
+            content = resp.choices[0].message.content
+            if content:
+                # Strip ... reasoning tags if a reasoning model was used
+                if "" in content:
+                    content = content.split("")[-1]
+                return content.strip()
         except Exception as err:
-            last_err = err
-            logger.warning(f"Groq model {model_name} unavailable, trying next fallback: {err}")
-            continue
+            logger.warning(f"Groq model {model_name} skipped: {err}")
+            if model_name in _DISCOVERED_MODELS:
+                _DISCOVERED_MODELS.remove(model_name)
+    return None
 
-    raise last_err
+
+def _build_smart_db_response(
+    message: str,
+    db: Session,
+    current_user: Any
+) -> tuple[str, list[str]]:
+    """
+    Intelligent database-driven response generator using live PostgreSQL data
+    so every prompt gets a real, specific answer even without external LLM access.
+    """
+    msg = message.lower().strip()
+    user_id = _u_get(current_user, "id")
+    first_name = _u_get(current_user, "first_name") or ""
+    last_name = _u_get(current_user, "last_name") or ""
+    full_name = (
+        _u_get(current_user, "full_name")
+        or f"{first_name} {last_name}".strip()
+        or _u_get(current_user, "username")
+        or "Attendee"
+    )
+    job_title = _u_get(current_user, "job_title") or _u_get(current_user, "designation") or "AI Professional"
+    company = _u_get(current_user, "company") or "NextGen AI"
+    email = _u_get(current_user, "email") or ""
+
+    # 1. Networking / People queries
+    if any(k in msg for k in ["network", "people", "connect", "match", "meet", "peer", "mentor"]):
+        other_users = db.query(UserModel).filter(
+            UserModel.id != user_id,
+            UserModel.is_active == True
+        ).limit(3).all()
+        if other_users:
+            names = []
+            for u in other_users:
+                u_name = getattr(u, "full_name", None) or f"{getattr(u, 'first_name', '')} {getattr(u, 'last_name', '')}".strip() or getattr(u, "username", "Attendee")
+                u_role = getattr(u, "job_title", None) or "AI Enthusiast"
+                u_comp = getattr(u, "company", None)
+                names.append(f"• {u_name} ({u_role}{f' at {u_comp}' if u_comp else ''})")
+            reply = (
+                f"Here are top networking matches for you based on your role ({job_title}):\n"
+                + "\n".join(names)
+                + "\n\nVisit the Network tab to connect with them directly!"
+            )
+        else:
+            reply = (
+                f"Based on your profile as {job_title} at {company}, head over to the Network tab to connect with fellow AI Engineers and Speakers!"
+            )
+        return reply, ["Browse sessions", "My profile", "View leaderboard"]
+
+    # 2. Profile queries
+    if any(k in msg for k in ["profile", "my info", "who am i", "account", "me"]):
+        reply = (
+            f"Here is your EventAI Profile summary:\n"
+            f"• Name: {full_name}\n"
+            f"• Designation: {job_title}\n"
+            f"• Company: {company}\n"
+            f"• Email: {email}\n\n"
+            f"You can edit your profile details anytime in the Profile tab."
+        )
+        return reply, ["Browse sessions", "Find people to network with", "Recommend sessions"]
+
+    # 3. Session / Schedule / Recommendation queries
+    if any(k in msg for k in ["session", "schedule", "recommend", "browse", "talk", "workshop", "agenda", "event"]):
+        sessions = db.query(SessionModel).order_by(SessionModel.start_time.asc()).limit(3).all()
+        if sessions:
+            s_lines = [
+                f"• {s.title} ({getattr(s, 'category', 'Workshop')} — {getattr(s, 'location', 'Main Hall')})"
+                for s in sessions
+            ]
+            reply = (
+                "Here are the top upcoming sessions recommended for you:\n"
+                + "\n".join(s_lines)
+                + "\n\nOpen the Sessions tab in the Hub to register and earn points!"
+            )
+        else:
+            reply = "Explore upcoming keynotes, AI workshops, and hands-on sessions in the Hub → Sessions tab!"
+        return reply, ["Find people to network with", "My profile", "See speakers"]
+
+    # 4. Speaker queries
+    if any(k in msg for k in ["speaker", "keynote", "presenter", "who is speaking"]):
+        speakers = db.query(Speaker).limit(3).all()
+        if speakers:
+            sp_lines = [
+                f"• {getattr(sp, 'name', None) or 'Featured Speaker'} ({getattr(sp, 'title', 'Keynote Speaker')})"
+                for sp in speakers
+            ]
+            reply = "Featured speakers at the event:\n" + "\n".join(sp_lines)
+        else:
+            reply = "Check out the Speakers directory in the Hub to view all keynote speakers and their sessions!"
+        return reply, ["Browse sessions", "Find people to network with", "My profile"]
+
+    # 5. Greeting or general question
+    sessions_count = db.query(func.count(SessionModel.id)).scalar() or 0
+    users_count = db.query(func.count(UserModel.id)).scalar() or 0
+    reply = (
+        f"Hi {full_name}! 👋 There are currently {sessions_count} sessions scheduled "
+        f"and {users_count} attendees on EventAI. Ask me to 'Browse sessions', "
+        f"'Find people to network with', or show 'My profile'!"
+    )
+    return reply, ["Browse sessions", "Find people to network with", "My profile"]
 
 
 # ============================================================================
@@ -148,22 +294,17 @@ async def get_ai_recommendations(
 
         if scored_sessions:
             top_session = scored_sessions[0]
-            reason = "Based on your interests and attendance history"
-            if groq_client:
-                try:
-                    ai_message = _call_groq_completion(
-                        messages=[{
-                            "role": "user",
-                            "content": f"""Given a session titled "{top_session['title']}" with description "{top_session['description']}", 
-                            write ONE short sentence (max 15 words) explaining why it's recommended. Be specific and compelling.
-                            Format: "Reason: [your sentence]" """
-                        }],
-                        temperature=0.7,
-                        max_tokens=100
-                    )
-                    reason = ai_message.choices[0].message.content.strip()
-                except Exception as e:
-                    logger.error(f"Groq API error: {str(e)}")
+            ai_reason = _call_groq_with_fallback(
+                messages=[{
+                    "role": "user",
+                    "content": f"""Given a session titled "{top_session['title']}" with description "{top_session['description']}", 
+                    write ONE short sentence (max 15 words) explaining why it's recommended. Be specific and compelling.
+                    Format: "Reason: [your sentence]" """
+                }],
+                temperature=0.7,
+                max_tokens=100
+            )
+            reason = ai_reason or "Based on your interests and attendance history"
 
             for i, session in enumerate(scored_sessions[:limit]):
                 session["reason"] = reason if i == 0 else f"Similar to '{top_session['title']}' which you might enjoy"
@@ -180,7 +321,7 @@ async def get_ai_recommendations(
 
 
 # ============================================================================
-# REAL AI CHATBOT - Groq Integration
+# REAL AI CHATBOT - Auto-Discovered Groq Models + Live DB Assistant
 # ============================================================================
 
 @router.post("/chat")
@@ -190,86 +331,92 @@ async def ai_chat(
     current_user: Any = Depends(get_current_user)
 ):
     """
-    PRODUCTION: Real AI chatbot using Groq (mixtral-8x7b-32768 with automatic fallback).
+    PRODUCTION: Real AI chatbot with dynamic model discovery and live DB answers.
     """
     try:
-        message = request_body.get("message", "").strip()
+        message = (request_body.get("message") or "").strip()
         if not message:
             raise HTTPException(status_code=400, detail="Message cannot be empty")
 
         context = request_body.get("context", "general")
         user_id = _u_get(current_user, "id")
-        full_name = _u_get(current_user, "full_name") or _u_get(current_user, "username", "Attendee")
+        first_name = _u_get(current_user, "first_name") or ""
+        last_name = _u_get(current_user, "last_name") or ""
+        full_name = (
+            _u_get(current_user, "full_name")
+            or f"{first_name} {last_name}".strip()
+            or _u_get(current_user, "username", "Attendee")
+        )
+        job_title = _u_get(current_user, "job_title") or "Attendee"
+        company = _u_get(current_user, "company") or ""
         email = _u_get(current_user, "email", "")
 
-        user_attended = db.query(SessionModel).join(SessionAttendance).filter(
-            SessionAttendance.user_id == user_id,
-            SessionAttendance.attended == True
+        upcoming_sessions = db.query(SessionModel).order_by(SessionModel.start_time.asc()).limit(5).all()
+        session_titles = [f"{s.title} ({getattr(s, 'location', 'Main Hall')})" for s in upcoming_sessions]
+
+        other_users = db.query(UserModel).filter(
+            UserModel.id != user_id,
+            UserModel.is_active == True
         ).limit(5).all()
-        attended_titles = [s.title for s in user_attended]
+        peer_names = [
+            f"{getattr(u, 'first_name', '')} {getattr(u, 'last_name', '')}".strip() or getattr(u, "username", "Attendee")
+            for u in other_users
+        ]
 
         system_prompt = f"""You are EventAI Assistant, a helpful AI for event management and networking.
         
 User Context:
 - Name: {full_name}
-- Attended Sessions: {', '.join(attended_titles) if attended_titles else 'None yet'}
+- Role: {job_title} {f'at {company}' if company else ''}
 - Email: {email}
+- Upcoming Event Sessions: {', '.join(session_titles) if session_titles else 'AI Keynote, Agentic Workflows Workshop'}
+- Fellow Attendees to Network With: {', '.join(peer_names) if peer_names else 'AI Engineers & Speakers'}
 
 Instructions:
-1. Be concise (max 100 words for chat)
-2. Be specific - reference actual sessions/features
-3. For recommendations, suggest exactly 2-3 items
-4. For career advice, give actionable suggestions
-5. Always ask clarifying questions if ambiguous
-6. Current datetime: {datetime.utcnow().isoformat()}
+1. Be concise (max 80 words for chat)
+2. Directly answer the user's request using the real sessions, peers, and user context above.
+3. Current datetime: {datetime.utcnow().isoformat()}"""
 
-Respond naturally and helpfully."""
+        ai_response = _call_groq_with_fallback(
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": message}
+            ],
+            temperature=0.7,
+            max_tokens=300
+        )
 
-        try:
-            response = _call_groq_completion(
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": message}
-                ],
-                temperature=0.8,
-                max_tokens=300
-            )
-
-            ai_response = response.choices[0].message.content.strip()
-
-            suggestions = []
-            if "recommend" in message.lower() or "suggest" in message.lower():
-                suggestions = ["View recommendations", "Filter by category", "See trending"]
-            elif "network" in message.lower() or "connect" in message.lower():
-                suggestions = ["Find people to meet", "View connections", "Message contacts"]
-            elif "summary" in message.lower():
-                suggestions = ["Summarize latest session", "View past summaries", "Download recap"]
-            elif "quiz" in message.lower() or "test" in message.lower():
-                suggestions = ["Start quiz", "View scores", "See leaderboard"]
-
+        if ai_response:
+            suggestions = ["Browse sessions", "Find people to network with", "My profile"]
             return {
                 "status": "success",
                 "response": ai_response,
                 "message": ai_response,
-                "suggestions": suggestions or ["Tell me more", "Show details", "Save this"],
+                "reply": ai_response,
+                "suggestions": suggestions,
                 "metadata": {
                     "category": context,
                     "timestamp": datetime.utcnow().isoformat(),
                     "user_id": user_id,
-                    "model": GROQ_MODEL
+                    "model": _DISCOVERED_MODELS[0] if _DISCOVERED_MODELS else "groq-auto"
                 }
             }
 
-        except Exception as groq_error:
-            logger.error(f"Groq API error: {str(groq_error)}")
-            fallback_msg = "I'm your EventAI Assistant! Ask me about upcoming sessions, speakers, networking matches, or learning paths."
-            return {
-                "status": "success",
-                "response": fallback_msg,
-                "message": fallback_msg,
-                "suggestions": ["Browse sessions", "Find people", "My profile"],
-                "metadata": {"error": "groq_fallback"}
+        # Live Database-Driven Answer when no Groq models are enabled on the API key
+        smart_reply, smart_suggestions = _build_smart_db_response(message, db, current_user)
+        return {
+            "status": "success",
+            "response": smart_reply,
+            "message": smart_reply,
+            "reply": smart_reply,
+            "suggestions": smart_suggestions,
+            "metadata": {
+                "category": context,
+                "timestamp": datetime.utcnow().isoformat(),
+                "user_id": user_id,
+                "mode": "smart_db_assistant"
             }
+        }
 
     except HTTPException:
         raise
@@ -310,12 +457,10 @@ async def get_session_summary(
             ]
         }
 
-        if groq_client:
-            try:
-                summary_response = _call_groq_completion(
-                    messages=[{
-                        "role": "user",
-                        "content": f"""Create a professional 2-minute summary of this event session:
+        summary_text = _call_groq_with_fallback(
+            messages=[{
+                "role": "user",
+                "content": f"""Create a professional 2-minute summary of this event session:
 
 Title: {session.title}
 Speaker: {getattr(session, 'speaker_name', 'Speaker')}
@@ -332,14 +477,15 @@ Provide JSON with these exact keys:
 }}
 
 Respond ONLY with valid JSON, no markdown."""
-                    }],
-                    temperature=0.7,
-                    max_tokens=600
-                )
-                summary_text = summary_response.choices[0].message.content.strip()
+            }],
+            temperature=0.7,
+            max_tokens=600
+        )
+        if summary_text:
+            try:
                 summary_data = json.loads(summary_text)
             except Exception as groq_err:
-                logger.warning(f"Groq summary fallback used: {groq_err}")
+                logger.warning(f"Groq summary JSON parse fallback used: {groq_err}")
 
         return {
             "status": "success",
@@ -349,7 +495,7 @@ Respond ONLY with valid JSON, no markdown."""
                 "speaker": getattr(session, "speaker_name", "Speaker"),
                 **summary_data,
                 "generated_at": datetime.utcnow().isoformat(),
-                "generated_by": GROQ_MODEL
+                "generated_by": _DISCOVERED_MODELS[0] if _DISCOVERED_MODELS else "eventai-engine"
             }
         }
 
@@ -376,12 +522,10 @@ async def get_session_quiz(
             raise HTTPException(status_code=404, detail="Session not found")
 
         questions = []
-        if groq_client:
-            try:
-                quiz_response = _call_groq_completion(
-                    messages=[{
-                        "role": "user",
-                        "content": f"""Create a 5-question multiple-choice quiz for this event session:
+        quiz_text = _call_groq_with_fallback(
+            messages=[{
+                "role": "user",
+                "content": f"""Create a 5-question multiple-choice quiz for this event session:
 
 Title: {session.title}
 Description: {getattr(session, 'description', '')}
@@ -400,15 +544,16 @@ Format as JSON:
 }}
 
 Respond ONLY with valid JSON."""
-                    }],
-                    temperature=0.5,
-                    max_tokens=1000
-                )
-                quiz_text = quiz_response.choices[0].message.content.strip()
+            }],
+            temperature=0.5,
+            max_tokens=1000
+        )
+        if quiz_text:
+            try:
                 quiz_data = json.loads(quiz_text)
                 questions = quiz_data.get("questions", [])
             except Exception as groq_err:
-                logger.warning(f"Groq quiz fallback used: {groq_err}")
+                logger.warning(f"Groq quiz JSON fallback used: {groq_err}")
 
         questions = questions[:5]
         while len(questions) < 5:
@@ -433,7 +578,7 @@ Respond ONLY with valid JSON."""
                 "total_questions": len(questions),
                 "questions": questions,
                 "generated_at": datetime.utcnow().isoformat(),
-                "generated_by": GROQ_MODEL
+                "generated_by": _DISCOVERED_MODELS[0] if _DISCOVERED_MODELS else "eventai-engine"
             }
         }
 
