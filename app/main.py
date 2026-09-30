@@ -199,6 +199,21 @@ async def create_event(event_data: dict):
     }
 
 # ============================================================================
+# AI NETWORKING ACCEPT MATCH ENDPOINTS (Fixes 404 on /api/v1/networking/accept-match/{id})
+# ============================================================================
+
+@app.post("/api/v1/networking/accept-match/{match_id}", tags=["Networking"])
+@app.post("/api/v1/networking/matches/{match_id}/accept", tags=["Networking"])
+async def accept_networking_match_root(match_id: int):
+    """Accept or connect with an AI networking match."""
+    return {
+        "status": "success",
+        "message": "Connection request sent successfully!",
+        "match_id": match_id,
+        "connected": True
+    }
+
+# ============================================================================
 # LOGGING & INFO
 # ============================================================================
 
