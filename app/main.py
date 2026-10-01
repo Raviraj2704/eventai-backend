@@ -7,6 +7,7 @@ import os
 from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 from contextlib import asynccontextmanager
 
 from app.database import init_db
@@ -111,7 +112,10 @@ app.add_middleware(
     max_age=86400,  # 24 hours
 )
 
-
+# ================================================
+# GZIP COMPRESSION MIDDLEWARE
+# ================================================
+app.add_middleware(GZipMiddleware, minimum_size=1000)
 
 # ============================================================================
 # IMPORT ROUTERS (AFTER MIDDLEWARE)
