@@ -106,17 +106,17 @@ async def get_polls(
         
         polls_data = []
         for poll in polls:
-            poll_resp = PollResponse.model_validate(poll)
+            # Convert to dict immediately so we can safely add custom fields
+            poll_dict = PollResponse.model_validate(poll).model_dump()
             
-            # Map question to title if schema expects title
-            if hasattr(poll_resp, "title") and not poll_resp.title and hasattr(poll, "question"):
-                poll_resp.title = poll.question
+            if not poll_dict.get("title") and hasattr(poll, "question"):
+                poll_dict["title"] = poll.question
 
             options = db.query(PollOption).filter(
                 PollOption.poll_id == poll.id
             ).order_by(PollOption.order).all()
             
-            poll_resp.options = [
+            poll_dict["options"] = [
                 {
                     "id": opt.id,
                     "text": opt.option_text,
@@ -127,6 +127,7 @@ async def get_polls(
                 for opt in options
             ]
             
+            poll_dict["user_voted"] = False
             if current_user:
                 user_vote = db.query(PollVote).filter(
                     and_(
@@ -135,13 +136,13 @@ async def get_polls(
                     )
                 ).first()
                 
-                poll_resp.user_voted = user_vote is not None
+                poll_dict["user_voted"] = user_vote is not None
                 if user_vote:
-                    for opt in poll_resp.options:
+                    for opt in poll_dict["options"]:
                         if opt["id"] == user_vote.option_id:
                             opt["user_selected"] = True
             
-            polls_data.append(poll_resp)
+            polls_data.append(poll_dict)
         
         return {
             "total": total,
@@ -661,17 +662,21 @@ def create_activity(
             description=activity_data.get('description', ''),
             priority=activity_data.get('priority', 'medium'),
             points_reward=activity_data.get('points_reward', 50),
+            activity_type=activity_data.get('activity_type', 'general'),
             created_at=datetime.utcnow()
         )
-        db.add(new_activity)
+        new_act = Activity(**act_kwargs)
+        db.add(new_act)
         db.commit()
+        db.refresh(new_act)
         
         return {
-            "id": new_activity.id,
-            "title": new_activity.title,
-            "description": new_activity.description,
-            "priority": new_activity.priority,
-            "points_reward": new_activity.points_reward,
+            "id": new_act.id,
+            "title": new_act.title,
+            "description": new_act.description,
+            "priority": new_act.priority,
+            "points_reward": new_act.points_reward,
+            "activity_type": new_act.activity_type,
             "status": "created"
         }
     
