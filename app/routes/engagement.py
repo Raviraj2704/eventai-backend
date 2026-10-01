@@ -159,6 +159,103 @@ async def get_polls(
 
 
 # ============================================================================
+# POLLS - CREATE POLL (ADDED FROM UPDATED CODE)
+# ============================================================================
+
+@router.post("/polls")
+def create_poll(
+    poll_data: dict = Body(...),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Create a new poll
+    """
+    try:
+        # Validate input
+        if not poll_data.get('question'):
+            raise HTTPException(status_code=400, detail="Poll question is required")
+        if not poll_data.get('options') or len(poll_data['options']) < 2:
+            raise HTTPException(status_code=400, detail="At least 2 options required")
+        
+        # Create poll
+        new_poll = Poll(
+            question=poll_data['question'],
+            description=poll_data.get('description', ''),
+            is_active=True,
+            total_votes=0,
+            created_at=datetime.utcnow()
+        )
+        db.add(new_poll)
+        db.flush()  # Get the poll ID
+        
+        # Add poll options
+        for idx, option_text in enumerate(poll_data['options']):
+            option = PollOption(
+                poll_id=new_poll.id,
+                option_text=option_text,
+                vote_count=0,
+                percentage=0.0,
+                order=idx + 1
+            )
+            db.add(option)
+        
+        db.commit()
+        
+        return {
+            "id": new_poll.id,
+            "title": new_poll.question,
+            "description": getattr(new_poll, 'description', ''),
+            "created_at": new_poll.created_at,
+            "status": "created"
+        }
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Error creating poll: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to create poll: {str(e)}")
+
+
+# ============================================================================
+# POLLS - DELETE POLL (ADDED FROM UPDATED CODE)
+# ============================================================================
+
+@router.delete("/polls/{poll_id}")
+def delete_poll(
+    poll_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Delete a poll and all its options
+    """
+    try:
+        poll = db.query(Poll).filter(Poll.id == poll_id).first()
+        
+        if not poll:
+            raise HTTPException(status_code=404, detail="Poll not found")
+        
+        # Delete associated options and votes
+        db.query(PollVote).filter(PollVote.poll_id == poll_id).delete()
+        db.query(PollOption).filter(PollOption.poll_id == poll_id).delete()
+        
+        # Delete the poll
+        db.delete(poll)
+        db.commit()
+        
+        return {"status": "deleted", "id": poll_id}
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Error deleting poll: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to delete poll: {str(e)}")
+
+
+# ============================================================================
 # POLLS - VOTE ON POLL
 # ============================================================================
 
@@ -538,6 +635,88 @@ async def get_activities(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to fetch activities"
         )
+
+
+# ============================================================================
+# ACTIVITIES - CREATE ACTIVITY (ADDED FROM UPDATED CODE)
+# ============================================================================
+
+@router.post("/activities")
+def create_activity(
+    activity_data: dict = Body(...),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Create a new activity
+    """
+    try:
+        # Validate input
+        if not activity_data.get('title'):
+            raise HTTPException(status_code=400, detail="Activity title is required")
+        
+        # Create activity
+        new_activity = Activity(
+            title=activity_data['title'],
+            description=activity_data.get('description', ''),
+            priority=activity_data.get('priority', 'medium'),
+            points_reward=activity_data.get('points_reward', 50),
+            created_at=datetime.utcnow()
+        )
+        db.add(new_activity)
+        db.commit()
+        
+        return {
+            "id": new_activity.id,
+            "title": new_activity.title,
+            "description": new_activity.description,
+            "priority": new_activity.priority,
+            "points_reward": new_activity.points_reward,
+            "status": "created"
+        }
+    
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Error creating activity: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to create activity: {str(e)}")
+
+
+# ============================================================================
+# ACTIVITIES - DELETE ACTIVITY (ADDED FROM UPDATED CODE)
+# ============================================================================
+
+@router.delete("/activities/{activity_id}")
+def delete_activity(
+    activity_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Delete an activity
+    """
+    try:
+        activity = db.query(Activity).filter(Activity.id == activity_id).first()
+        
+        if not activity:
+            raise HTTPException(status_code=404, detail="Activity not found")
+        
+        # Delete associated user activities (Using UserActivityCompletion based on existing code schema)
+        db.query(UserActivityCompletion).filter(
+            UserActivityCompletion.activity_id == activity_id
+        ).delete()
+        
+        # Delete the activity
+        db.delete(activity)
+        db.commit()
+        
+        return {"status": "deleted", "id": activity_id}
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Error deleting activity: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to delete activity: {str(e)}")
 
 
 # ============================================================================
