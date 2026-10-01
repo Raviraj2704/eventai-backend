@@ -41,7 +41,8 @@ def _seed_engagement_data_if_empty(db: Session):
             db.add_all(opt1 + opt2)
 
         if db.query(Quiz).count() == 0:
-            q1 = Quiz(title="FastAPI Masterclass", description="Test your FastAPI knowledge", difficulty="beginner", passing_score=60, points_reward=50, is_published=True, created_at=datetime.utcnow())
+            # FIXED: Changed difficulty to "easy" to match challengedifficulty enum
+            q1 = Quiz(title="FastAPI Masterclass", description="Test your FastAPI knowledge", difficulty="easy", passing_score=60, points_reward=50, is_published=True, created_at=datetime.utcnow())
             db.add(q1)
             db.flush()
 
@@ -50,8 +51,9 @@ def _seed_engagement_data_if_empty(db: Session):
             db.add_all([qq1, qq2])
 
         if db.query(Activity).count() == 0:
-            a1 = Activity(title="Connect with 3 Engineers", description="Network in the Networking tab", priority="high", points_reward=30, created_at=datetime.utcnow())
-            a2 = Activity(title="Rate a Speaker", description="Provide speaker feedback", priority="medium", points_reward=20, created_at=datetime.utcnow())
+            # FIXED: Added required activity_type="networking" and "feedback"
+            a1 = Activity(title="Connect with 3 Engineers", description="Network in the Networking tab", priority="high", points_reward=30, activity_type="networking", created_at=datetime.utcnow())
+            a2 = Activity(title="Rate a Speaker", description="Provide speaker feedback", priority="medium", points_reward=20, activity_type="feedback", created_at=datetime.utcnow())
             db.add_all([a1, a2])
 
         db.commit()
@@ -257,7 +259,7 @@ async def vote_poll(
 
 
 # ============================================================================
-# QUIZZES ENDPOINTS - ENUM FIXED
+# QUIZZES ENDPOINTS
 # ============================================================================
 
 @router.get("/quizzes")
@@ -296,7 +298,7 @@ async def get_quizzes(
                 "id": quiz.id,
                 "title": quiz.title,
                 "description": getattr(quiz, 'description', ''),
-                "difficulty": getattr(quiz, 'difficulty', 'beginner'),
+                "difficulty": getattr(quiz, 'difficulty', 'easy'),
                 "question_count": question_count,
                 "points_reward": getattr(quiz, 'points_reward', 50),
                 "user_attempt": user_attempt
@@ -327,7 +329,7 @@ async def get_quiz_detail(
             "id": quiz.id,
             "title": quiz.title,
             "description": getattr(quiz, 'description', ''),
-            "difficulty": getattr(quiz, 'difficulty', 'beginner'),
+            "difficulty": getattr(quiz, 'difficulty', 'easy'),
             "points_reward": getattr(quiz, 'points_reward', 50),
             "questions": [
                 {
@@ -429,12 +431,12 @@ async def create_quiz(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Create new quiz - Enum Fixed to 'beginner'"""
+    """Create new quiz - Enum Fixed to 'easy'"""
     try:
         title = (payload.get("title") or "New AI Quiz").strip()
         description = payload.get("description") or ""
-        # Safe fallback to 'beginner' instead of 'intermediate' to avoid enum crashes
-        difficulty = "beginner"
+        # FIXED: Safe fallback to 'easy' to avoid challengedifficulty enum crashes
+        difficulty = "easy"
         points_reward = int(payload.get("points_reward") or 50)
         
         new_quiz = Quiz(
@@ -456,7 +458,7 @@ async def create_quiz(
             question_type="multiple_choice",
             options_json=["High-performance web framework", "CSS framework", "Database"],
             correct_answer="High-performance web framework",
-            points_value=50,
+            points_value=points_reward,
             question_order=1
         )
         db.add(q1)
@@ -561,6 +563,7 @@ async def create_activity(
             description=description,
             priority=priority,
             points_reward=points_reward,
+            activity_type="general", # FIXED: Satisfies PostgreSQL NOT NULL constraint
             created_at=datetime.utcnow()
         )
         db.add(new_act)
