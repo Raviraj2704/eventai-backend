@@ -435,26 +435,89 @@ async def submit_quiz(
         raise HTTPException(status_code=500, detail="Failed to submit quiz")
 
 
+@router.get("/quizzes")
+async def get_quizzes(
+    page: int = Query(1, ge=1),
+    limit: int = Query(20, ge=1, le=100),
+    current_user: Optional[User] = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Get all quizzes WITH their attached questions"""
+    try:
+        _seed_engagement_data_if_empty(db)
+        query = db.query(Quiz).filter(Quiz.is_published == True).order_by(Quiz.created_at.desc())
+        
+        total = query.count()
+        quizzes = query.offset((page - 1) * limit).limit(limit).all()
+        
+        quizzes_data = []
+        for quiz in quizzes:
+            # 1. Fetch the actual questions from the database
+            questions = db.query(QuizQuestion).filter(QuizQuestion.quiz_id == quiz.id).order_by(QuizQuestion.question_order).all()
+            
+            user_attempt = None
+            if current_user:
+                attempt = db.query(UserQuizAttempt).filter(
+                    and_(UserQuizAttempt.user_id == current_user.id, UserQuizAttempt.quiz_id == quiz.id)
+                ).order_by(UserQuizAttempt.completed_at.desc()).first()
+                
+                if attempt:
+                    user_attempt = {
+                        "score": attempt.score,
+                        "percentage": attempt.percentage,
+                        "passed": attempt.passed
+                    }
+            
+            quiz_dict = {
+                "id": quiz.id,
+                "title": quiz.title,
+                "description": getattr(quiz, 'description', ''),
+                "difficulty": getattr(quiz, 'difficulty', 'easy'),
+                "question_count": len(questions),
+                "points_reward": getattr(quiz, 'points_reward', 50),
+                "user_attempt": user_attempt,
+                # 2. Attach questions so the React frontend can render the buttons
+                "questions": [
+                    {
+                        "id": q.id,
+                        "text": q.question_text,
+                        "type": q.question_type,
+                        "options": q.options_json if q.question_type == "multiple_choice" else ["True", "False"],
+                        "points_value": q.points_value
+                    }
+                    for q in questions
+                ]
+            }
+            quizzes_data.append(quiz_dict)
+        
+        return {"total": total, "page": page, "limit": limit, "data": quizzes_data}
+    
+    except Exception as e:
+        logger.error(f"Get quizzes error: {e}")
+        raise HTTPException(status_code=500, detail="Failed to fetch quizzes")
+
+
 @router.post("/quizzes", status_code=201)
 async def create_quiz(
     payload: Dict[str, Any] = Body(...),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Create new quiz"""
+    """Create new quiz with a dynamic True/False question"""
     try:
         title = (payload.get("title") or "New AI Quiz").strip()
         description = payload.get("description") or ""
         difficulty = "easy"
         points_reward = int(payload.get("points_reward") or 50)
+        q1_text = payload.get("question1") or "Is this a valid statement?"
         
         new_quiz = Quiz(
             title=title,
             description=description,
             difficulty=difficulty,
-            duration_minutes=5,        # FIXED: Added to satisfy database constraint
-            total_questions=1,         # FIXED: Added to satisfy database constraint
-            passing_score=60,
+            duration_minutes=5,
+            total_questions=1,
+            passing_score=50, # 50% passing score means 1 correct answer passes
             points_reward=points_reward,
             is_published=True,
             created_at=datetime.utcnow()
@@ -462,13 +525,13 @@ async def create_quiz(
         db.add(new_quiz)
         db.flush()
 
-        q1_text = payload.get("question1") or "What is the main purpose of FastAPI?"
+        # Create a True/False question based on the user's input
         q1 = QuizQuestion(
             quiz_id=new_quiz.id,
             question_text=q1_text,
             question_type="multiple_choice",
-            options_json=["High-performance web framework", "CSS framework", "Database"],
-            correct_answer="High-performance web framework",
+            options_json=["True", "False"],
+            correct_answer="True", # Default correct answer
             points_value=points_reward,
             question_order=1
         )
@@ -484,7 +547,6 @@ async def create_quiz(
         db.rollback()
         logger.error(f"Create quiz error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
-
 
 @router.delete("/quizzes/{quiz_id}")
 async def delete_quiz(
