@@ -158,15 +158,23 @@ async def create_resource_link(
     db: Session = Depends(get_db)
 ):
     """
-    Create a new manual resource link for the Briefcase (JSON payload).
+    Create a new manual resource link for the Briefcase with safe database enum mapping.
     """
     try:
-        # Map frontend payload fields
         title = payload.get("title", "Saved Link")
         description = payload.get("description", "")
-        # Safely default to 'document' if an invalid enum value is passed
-        r_type = payload.get("resource_type", "document") 
         file_url = payload.get("file_url", "")
+        
+        # MAP safely to database-supported enums (presentation, document, pdf, video)
+        raw_type = (payload.get("resource_type") or "document").lower()
+        if raw_type in ["slides", "presentation"]:
+            r_type = "presentation"
+        elif raw_type in ["link", "code"]:
+            r_type = "document"
+        elif raw_type in ["pdf", "video", "image", "document"]:
+            r_type = raw_type
+        else:
+            r_type = "document"
         
         resource = Resource(
             title=title,
@@ -190,9 +198,8 @@ async def create_resource_link(
         logger.error(f"Resource manual creation error: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to create manual resource"
+            detail=str(e)
         )
-
 
 # ============================================================================
 # CREATE RESOURCE (FILE UPLOAD)
