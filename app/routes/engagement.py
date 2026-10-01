@@ -1,5 +1,5 @@
 # ============================================================================
-# Engagement Routes - FULLY FIXED (Enum, 422, & 500 Errors Resolved)
+# Engagement Routes - FULLY FIXED (Enum, Constraints, 422, & 500 Errors Resolved)
 # ============================================================================
 # File: app/routes/engagement.py
 
@@ -41,8 +41,18 @@ def _seed_engagement_data_if_empty(db: Session):
             db.add_all(opt1 + opt2)
 
         if db.query(Quiz).count() == 0:
-            # FIXED: Changed difficulty to "easy" to match challengedifficulty enum
-            q1 = Quiz(title="FastAPI Masterclass", description="Test your FastAPI knowledge", difficulty="easy", passing_score=60, points_reward=50, is_published=True, created_at=datetime.utcnow())
+            # FIXED: Added duration_minutes and total_questions to satisfy NOT NULL constraints
+            q1 = Quiz(
+                title="FastAPI Masterclass", 
+                description="Test your FastAPI knowledge", 
+                difficulty="easy", 
+                duration_minutes=5, 
+                total_questions=2,
+                passing_score=60, 
+                points_reward=50, 
+                is_published=True, 
+                created_at=datetime.utcnow()
+            )
             db.add(q1)
             db.flush()
 
@@ -431,11 +441,10 @@ async def create_quiz(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Create new quiz - Enum Fixed to 'easy'"""
+    """Create new quiz"""
     try:
         title = (payload.get("title") or "New AI Quiz").strip()
         description = payload.get("description") or ""
-        # FIXED: Safe fallback to 'easy' to avoid challengedifficulty enum crashes
         difficulty = "easy"
         points_reward = int(payload.get("points_reward") or 50)
         
@@ -443,6 +452,8 @@ async def create_quiz(
             title=title,
             description=description,
             difficulty=difficulty,
+            duration_minutes=5,        # FIXED: Added to satisfy database constraint
+            total_questions=1,         # FIXED: Added to satisfy database constraint
             passing_score=60,
             points_reward=points_reward,
             is_published=True,
