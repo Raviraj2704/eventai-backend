@@ -5,11 +5,11 @@
 # Purpose: Resource management, upload, download, and rating
 # Status: Production-Ready ✅
 
-from fastapi import APIRouter, Depends, HTTPException, status, Query, UploadFile, File
+from fastapi import APIRouter, Depends, HTTPException, status, Query, UploadFile, File, Body
 from sqlalchemy.orm import Session
 from sqlalchemy import and_, or_, cast, String
 from datetime import datetime
-from typing import Optional
+from typing import Optional, Dict, Any
 import logging
 
 from app.database import get_db
@@ -145,11 +145,61 @@ async def get_resource_by_id(
 
 
 # ============================================================================
-# CREATE RESOURCE
+# CREATE RESOURCE (MANUAL LINK SAVE)
 # ============================================================================
 
 @router.post(
     "",
+    status_code=status.HTTP_201_CREATED
+)
+async def create_resource_link(
+    payload: Dict[str, Any] = Body(...),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Create a new manual resource link for the Briefcase (JSON payload).
+    """
+    try:
+        # Map frontend payload fields
+        title = payload.get("title", "Saved Link")
+        description = payload.get("description", "")
+        # Safely default to 'document' if an invalid enum value is passed
+        r_type = payload.get("resource_type", "document") 
+        file_url = payload.get("file_url", "")
+        
+        resource = Resource(
+            title=title,
+            description=description,
+            resource_type=r_type, 
+            file_url=file_url,
+            file_size_mb=0.0,
+            uploaded_by_user_id=current_user.id,
+            is_published=True,
+            created_at=datetime.utcnow()
+        )
+        
+        db.add(resource)
+        db.commit()
+        db.refresh(resource)
+        
+        return {"status": "success", "message": "Resource created", "id": resource.id}
+
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Resource manual creation error: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to create manual resource"
+        )
+
+
+# ============================================================================
+# CREATE RESOURCE (FILE UPLOAD)
+# ============================================================================
+
+@router.post(
+    "/upload",
     response_model=ResourceResponse,
     status_code=status.HTTP_201_CREATED,
     responses={
@@ -157,7 +207,7 @@ async def get_resource_by_id(
         400: {"model": ErrorResponse}
     }
 )
-async def create_resource(
+async def create_resource_upload(
     title: str,
     description: Optional[str] = None,
     resource_type: str = None,
@@ -168,7 +218,7 @@ async def create_resource(
     db: Session = Depends(get_db)
 ):
     """
-    Create new resource with file upload
+    Create new resource with file upload (Moved to /upload to prevent conflicts)
     """
     try:
         # Validate file size (100MB limit)
@@ -188,7 +238,7 @@ async def create_resource(
         resource = Resource(
             title=title,
             description=description,
-            resource_type=resource_type,
+            resource_type=resource_type or "document",
             category=category,
             file_url=file_url,
             file_size_mb=file_size_mb,
@@ -213,7 +263,7 @@ async def create_resource(
         logger.error(f"Resource creation error: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to create resource"
+            detail="Failed to upload resource"
         )
 
 
@@ -372,7 +422,7 @@ async def rate_resource(
 
 
 # ============================================================================
-# DELETE RESOURCE (For Briefcase Delete Support)
+# DELETE RESOURCE
 # ============================================================================
 
 @router.delete(
