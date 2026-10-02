@@ -16,7 +16,8 @@ class Settings(BaseSettings):
     # JWT - Uses a dummy fallback for safety
     SECRET_KEY: str = os.getenv("SECRET_KEY", "fallback-secret-key-do-not-use-in-prod")
     ALGORITHM: str = os.getenv("ALGORITHM", "HS256")
-    ACCESS_TOKEN_EXPIRE_MINUTES: int = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "30"))
+    # FIXED: Changed default expiration from 30 minutes to 30 days (43200 minutes)
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "43200"))
     REFRESH_TOKEN_EXPIRE_DAYS: int = 7
     
     # URLs
