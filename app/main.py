@@ -15,7 +15,6 @@ from contextlib import asynccontextmanager
 from app.database import init_db
 from app.config import settings
 from app.routes.auth import get_current_user
-from backend.app.routes import speaker_interactions
 
 # Load environment variables
 load_dotenv()
