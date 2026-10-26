@@ -4,6 +4,7 @@
 
 import logging
 import os
+from app.routes import session_interactions
 from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -135,6 +136,7 @@ app.include_router(auth.router, prefix="/api/v1/auth", tags=["Auth"])
 app.include_router(users.router, prefix="/api/v1/users", tags=["Users"])
 app.include_router(events.router, prefix="/api/v1/events", tags=["Events"])
 app.include_router(sessions.router, prefix="/api/v1/sessions", tags=["Sessions"])
+app.include_router(session_interactions.router, prefix="/api/v1/sessions", tags=["Session Interactions"])
 app.include_router(speakers.router, prefix="/api/v1/speakers", tags=["Speakers"])
 app.include_router(resources.router, prefix="/api/v1/resources", tags=["Resources"])
 app.include_router(ratings.router, prefix="/api/v1/ratings", tags=["Ratings"])
