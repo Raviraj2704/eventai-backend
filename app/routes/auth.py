@@ -16,6 +16,8 @@ from app.models import User
 from app.schemas import RegisterSchema, LoginSchema, TokenResponse, UserResponse
 from app.utils.auth import hash_password, verify_password, create_access_token, create_refresh_token
 from datetime import datetime
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from app.utils.auth import decode_token
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["Auth"])
@@ -239,21 +241,45 @@ def complete_profile(
 # GET CURRENT USER ENDPOINT
 # ============================================================================
 
-@router.get("/me", response_model=UserResponse)
-def get_current_user(db: Session = Depends(get_db)):
-    """Get current user info"""
-    try:
-        # ✅ This would use get_current_user in production
-        # For now, returns a sample response
-        
-        return {
-            "message": "User info endpoint"
-        }
-        
-    except Exception as e:
-        logger.error(f"❌ Get user error: {e}")
-        raise HTTPException(status_code=500, detail="Failed to get user info")
+security = HTTPBearer(auto_error=False)
 
+
+def get_current_user(
+    credentials: HTTPAuthorizationCredentials = Depends(security),
+    db: Session = Depends(get_db),
+):
+    """Verify the Bearer token and return the logged-in user"""
+    if credentials is None or not credentials.credentials:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+
+    payload = decode_token(credentials.credentials)
+    if not payload:
+        raise HTTPException(status_code=401, detail="Invalid or expired token")
+
+    try:
+        user_id = int(payload.get("sub"))
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=401, detail="Invalid token subject")
+
+    user = db.query(User).filter(User.id == user_id).first()
+    if user is None:
+        raise HTTPException(status_code=401, detail="User not found")
+
+    if getattr(user, "is_active", True) is False:
+        raise HTTPException(status_code=403, detail="Account is deactivated")
+
+    return user
+
+
+@router.get("/me")
+def read_current_user(current_user: User = Depends(get_current_user)):
+    """Return the logged-in user's profile"""
+    return {
+        "id": current_user.id,
+        "email": current_user.email,
+        "name": getattr(current_user, "name", None),
+        "role": getattr(current_user, "role", None),
+    }
 
 # ============================================================================
 # LOGOUT ENDPOINT
