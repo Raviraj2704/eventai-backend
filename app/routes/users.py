@@ -9,6 +9,9 @@ from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File,
 from typing import Optional, Dict, Any
 from sqlalchemy.orm import Session
 from datetime import datetime
+import os
+import cloudinary
+import cloudinary.uploader
 import logging
 
 from app.database import get_db
@@ -279,65 +282,85 @@ async def update_user_profile(
 # UPLOAD AVATAR
 # ============================================================================
 
+ALLOWED_AVATAR_TYPES = {"image/jpeg", "image/png", "image/webp"}
+MAX_AVATAR_BYTES = 5 * 1024 * 1024  # 5 MB
+
+
+def _configure_cloudinary() -> None:
+    cloudinary.config(
+        cloud_name=os.getenv("CLOUDINARY_CLOUD_NAME"),
+        api_key=os.getenv("CLOUDINARY_API_KEY"),
+        api_secret=os.getenv("CLOUDINARY_API_SECRET"),
+        secure=True,
+    )
+
+
 @router.post(
     "/me/avatar",
     response_model=AvatarUploadResponse,
-    responses={400: {"model": ErrorResponse}, 401: {"model": ErrorResponse}}
+    responses={400: {"model": ErrorResponse}, 401: {"model": ErrorResponse}},
 )
 async def upload_avatar(
     file: UploadFile = File(...),
     current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
 ):
-    """
-    Upload user avatar
-    """
-    try:
-        # Validate file type
-        allowed_types = ["image/jpeg", "image/png", "image/gif", "image/webp"]
-        if file.content_type not in allowed_types:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Invalid file type. Only JPEG, PNG, GIF, and WebP are allowed"
-            )
-        
-        # Validate file size (max 5MB)
-        contents = await file.read()
-        if len(contents) > 5 * 1024 * 1024:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="File size exceeds 5MB limit"
-            )
-        
-        # In production, upload to S3/Firebase
-        # For now, generate a placeholder URL
-        avatar_url = f"https://api.eventai.com/uploads/avatars/{current_user.id}.{file.filename.split('.')[-1]}"
-        
-        # Update user avatar
-        if hasattr(current_user, "avatar_url"):
-            current_user.avatar_url = avatar_url
-        if hasattr(current_user, "updated_at"):
-            current_user.updated_at = datetime.utcnow()
-        
-        db.commit()
-        db.refresh(current_user)
-        
-        logger.info(f"Avatar uploaded for user ID: {current_user.id}")
-        
-        return AvatarUploadResponse(
-            avatar_url=avatar_url,
-            message="Avatar uploaded successfully"
-        )
-    
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Avatar upload error: {e}")
+    """Upload the logged-in user's profile photo to Cloudinary"""
+    if file.content_type not in ALLOWED_AVATAR_TYPES:
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to upload avatar"
+            status_code=400,
+            detail="Only JPG, PNG, or WEBP images are allowed",
         )
 
+    contents = await file.read()
+    if not contents:
+        raise HTTPException(status_code=400, detail="The file is empty")
+    if len(contents) > MAX_AVATAR_BYTES:
+        raise HTTPException(status_code=400, detail="Image must be 5 MB or smaller")
+
+    _configure_cloudinary()
+    try:
+        result = cloudinary.uploader.upload(
+            contents,
+            folder="eventai/avatars",
+            public_id=f"user_{current_user.id}",
+            overwrite=True,
+            invalidate=True,
+            resource_type="image",
+            transformation=[
+                {"width": 400, "height": 400, "crop": "fill", "gravity": "face"}
+            ],
+        )
+    except Exception as e:
+        logger.error(f"Cloudinary upload error: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail="Could not store your photo. Please try again.",
+        )
+
+    avatar_url = result.get("secure_url")
+    if not avatar_url:
+        raise HTTPException(
+            status_code=500,
+            detail="Could not store your photo. Please try again.",
+        )
+
+    try:
+        current_user.avatar_url = avatar_url
+        if hasattr(current_user, "updated_at"):
+            current_user.updated_at = datetime.utcnow()
+        db.commit()
+        db.refresh(current_user)
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Avatar save error: {e}")
+        raise HTTPException(status_code=500, detail="Failed to save your photo")
+
+    logger.info(f"Avatar uploaded for user ID: {current_user.id}")
+    return AvatarUploadResponse(
+        avatar_url=avatar_url,
+        message="Avatar uploaded successfully",
+    )
 
 # ============================================================================
 # DELETE ACCOUNT
