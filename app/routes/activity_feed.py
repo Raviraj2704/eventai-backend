@@ -1,9 +1,12 @@
 # ============================================================================
-# Activity Feed (Production Ready)
+# Activity Feed and Top Leaderboard (Production Ready)
 # File: app/routes/activity_feed.py
 #
 # GET /api/v1/activity/feed?page=1&limit=10
 #   Approved social posts with the author's name and photo, newest first.
+#
+# GET /api/v1/activity/leaderboard/top?limit=3
+#   Top users by points, with name and profile photo, ranked 1..N.
 # ============================================================================
 
 import logging
@@ -13,7 +16,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session as DBSession
 
 from app.database import get_db
-from app.models import SocialPost, User
+from app.models import Leaderboard, SocialPost, User
 from app.routes.auth import get_current_user
 
 logger = logging.getLogger(__name__)
@@ -77,3 +80,42 @@ def get_activity_feed(
     except Exception as exc:
         logger.error("Get activity feed error: %s", exc)
         raise HTTPException(status_code=500, detail="Could not load the activity feed")
+
+
+@router.get("/leaderboard/top")
+def get_top_leaderboard(
+    limit: int = Query(3, ge=1, le=10),
+    db: DBSession = Depends(get_db),
+    current_user: Any = Depends(get_current_user),
+):
+    try:
+        rows = (
+            db.query(Leaderboard)
+            .order_by(Leaderboard.total_points.desc(), Leaderboard.user_id.asc())
+            .limit(limit)
+            .all()
+        )
+
+        user_ids = [row.user_id for row in rows]
+        users = {}
+        if user_ids:
+            users = {
+                u.id: u
+                for u in db.query(User).filter(User.id.in_(user_ids)).all()
+            }
+
+        data = []
+        for index, row in enumerate(rows, start=1):
+            user = users.get(row.user_id)
+            data.append({
+                "rank": index,
+                "user_id": row.user_id,
+                "name": _author_name(user),
+                "avatar_url": user.avatar_url if user else None,
+                "total_points": row.total_points or 0,
+            })
+
+        return {"status": "success", "data": data}
+    except Exception as exc:
+        logger.error("Get top leaderboard error: %s", exc)
+        raise HTTPException(status_code=500, detail="Could not load the leaderboard")
