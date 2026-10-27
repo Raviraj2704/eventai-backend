@@ -6,6 +6,7 @@ import logging
 import os
 from app.routes.speaker_interactions import follow_router, chat_router
 from app.routes import session_interactions
+from app.routes import activity_feed
 from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -127,7 +128,7 @@ app.add_middleware(GZipMiddleware, minimum_size=1000)
 from app.routes import (
     auth, sessions, speakers, resources, badges, 
     challenges, leaderboard, learning_paths, ratings,
-    social, announcements, engagement, partners, users, admin, analytics, ai_routes, admin, messages, events
+    social, announcements, engagement, partners, users, admin, analytics, ai_routes, admin, messages, events, activity_feed
 )
 # ============================================================================
 # INCLUDE ROUTERS
@@ -138,6 +139,7 @@ app.include_router(users.router, prefix="/api/v1/users", tags=["Users"])
 app.include_router(events.router, prefix="/api/v1/events", tags=["Events"])
 app.include_router(follow_router, prefix="/api/v1/speakers", tags=["Speaker Follow"])
 app.include_router(chat_router, prefix="/api/v1/chat", tags=["Chat"])
+app.include_router(activity_feed.router, prefix="/api/v1/activity", tags=["Activity Feed"])
 app.include_router(sessions.router, prefix="/api/v1/sessions", tags=["Sessions"])
 app.include_router(session_interactions.router, prefix="/api/v1/sessions", tags=["Session Interactions"])
 app.include_router(speakers.router, prefix="/api/v1/speakers", tags=["Speakers"])
@@ -156,6 +158,7 @@ app.include_router(analytics.router, prefix="/api/v1/analytics", tags=["Analytic
 app.include_router(ai_routes.router, prefix="/api/v1/ai", tags=["AI Features"])
 app.include_router(admin.router, prefix="/api/v1/admin", tags=["Admin"])
 app.include_router(messages.router, prefix="/api/v1/messages", tags=["Messages"])
+app.include_router(activity_feed.router, prefix="/api/v1/activity", tags=["Activity Feed"])
 
 # ============================================================================
 # HEALTH CHECK ENDPOINTS
