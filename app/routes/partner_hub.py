@@ -95,9 +95,9 @@ class PartnerLogo(Base):
         ForeignKey(f"{User.__tablename__}.id", ondelete="SET NULL"),
         nullable=True,
     )
+    kind = Column(String(20), nullable=False, default="logo")  # logo | cover
     url = Column(String(500), nullable=False)
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
-
 
 class PartnerQuestion(Base):
     __tablename__ = "partner_questions"
@@ -458,29 +458,36 @@ def delete_partner_file(
 # Logo (camera or gallery photo)
 # ============================================================================
 
-@router.get("/{partner_id}/logo")
-def get_partner_logo(
+@router.get("/{partner_id}/images")
+def get_partner_images(
     partner_id: int,
     db: DBSession = Depends(get_db),
     current_user: Any = Depends(get_current_user),
 ):
     _get_partner_or_404(db, partner_id)
-    latest = (
-        db.query(PartnerLogo)
-        .filter(PartnerLogo.partner_id == partner_id)
-        .order_by(PartnerLogo.created_at.desc(), PartnerLogo.id.desc())
-        .first()
-    )
-    return {"status": "success", "data": {"url": latest.url if latest else None}}
+    result = {"logo": None, "cover": None}
+    for kind in ("logo", "cover"):
+        latest = (
+            db.query(PartnerLogo)
+            .filter(PartnerLogo.partner_id == partner_id, PartnerLogo.kind == kind)
+            .order_by(PartnerLogo.created_at.desc(), PartnerLogo.id.desc())
+            .first()
+        )
+        result[kind] = latest.url if latest else None
+    return {"status": "success", "data": result}
 
 
-@router.post("/{partner_id}/logo", status_code=status.HTTP_201_CREATED)
-def upload_partner_logo(
+@router.post("/{partner_id}/images/{kind}", status_code=status.HTTP_201_CREATED)
+def upload_partner_image(
     partner_id: int,
+    kind: str,
     file: UploadFile = File(...),
     db: DBSession = Depends(get_db),
     current_user: Any = Depends(get_current_user),
 ):
+    if kind not in ("logo", "cover"):
+        raise HTTPException(status_code=400, detail="Image kind must be logo or cover")
+
     _get_partner_or_404(db, partner_id)
     _require_manager(db, current_user, partner_id)
 
@@ -488,18 +495,23 @@ def upload_partner_logo(
         raise HTTPException(status_code=400, detail="Only JPG, PNG, or WEBP images are allowed")
 
     data = _read_upload(file, MAX_IMAGE_BYTES, "image")
-    url = _cloud_upload(data, f"eventai/partners/{partner_id}/logos", "image")
+    url = _cloud_upload(data, f"eventai/partners/{partner_id}/{kind}s", "image")
 
     try:
-        record = PartnerLogo(partner_id=partner_id, uploaded_by=current_user.id, url=url)
+        record = PartnerLogo(
+            partner_id=partner_id,
+            uploaded_by=current_user.id,
+            kind=kind,
+            url=url,
+        )
         db.add(record)
         db.commit()
     except SQLAlchemyError as exc:
         db.rollback()
-        logger.error("Save partner logo failed: %s", exc)
-        raise HTTPException(status_code=500, detail="Could not save the logo")
+        logger.error("Save partner image failed: %s", exc)
+        raise HTTPException(status_code=500, detail="Could not save the image")
 
-    return {"status": "success", "data": {"url": url}}
+    return {"status": "success", "data": {"kind": kind, "url": url}}
 
 
 # ============================================================================
