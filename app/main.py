@@ -7,6 +7,7 @@ import os
 from app.routes.speaker_interactions import follow_router, chat_router
 from app.routes import session_interactions
 from app.routes import activity_feed
+from app.routes import partner_hub
 from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -140,6 +141,7 @@ app.include_router(events.router, prefix="/api/v1/events", tags=["Events"])
 app.include_router(follow_router, prefix="/api/v1/speakers", tags=["Speaker Follow"])
 app.include_router(chat_router, prefix="/api/v1/chat", tags=["Chat"])
 app.include_router(activity_feed.router, prefix="/api/v1/activity", tags=["Activity Feed"])
+app.include_router(partner_hub.router, prefix="/api/v1/partner-hub", tags=["Partner Hub"])
 app.include_router(sessions.router, prefix="/api/v1/sessions", tags=["Sessions"])
 app.include_router(session_interactions.router, prefix="/api/v1/sessions", tags=["Session Interactions"])
 app.include_router(speakers.router, prefix="/api/v1/speakers", tags=["Speakers"])
