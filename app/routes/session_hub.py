@@ -46,7 +46,7 @@ REACTION_KINDS = ("like", "clap", "announce")
 # ============================================================================
 
 class SessionExtras(Base):
-    __tablename__ = "session_extras"
+    __tablename__ = "session_hub_extras"
 
     id = Column(Integer, primary_key=True, index=True)
     session_id = Column(
@@ -65,9 +65,9 @@ class SessionExtras(Base):
 
 
 class SessionSchedule(Base):
-    __tablename__ = "session_schedule"
+    __tablename__ = "session_hub_schedule"
     __table_args__ = (
-        UniqueConstraint("user_id", "session_id", name="uq_session_schedule"),
+        UniqueConstraint("user_id", "session_id", name="uq_session_hub_schedule"),
     )
 
     id = Column(Integer, primary_key=True, index=True)
@@ -88,9 +88,9 @@ class SessionSchedule(Base):
 
 
 class SessionBookmark(Base):
-    __tablename__ = "session_bookmarks"
+    __tablename__ = "session_hub_bookmarks"
     __table_args__ = (
-        UniqueConstraint("user_id", "session_id", name="uq_session_bookmark"),
+        UniqueConstraint("user_id", "session_id", name="uq_session_hub_bookmark"),
     )
 
     id = Column(Integer, primary_key=True, index=True)
@@ -110,9 +110,9 @@ class SessionBookmark(Base):
 
 
 class SessionReaction(Base):
-    __tablename__ = "session_reactions"
+    __tablename__ = "session_hub_reactions"
     __table_args__ = (
-        UniqueConstraint("user_id", "session_id", "kind", name="uq_session_reaction"),
+        UniqueConstraint("user_id", "session_id", "kind", name="uq_session_hub_reaction"),
     )
 
     id = Column(Integer, primary_key=True, index=True)
