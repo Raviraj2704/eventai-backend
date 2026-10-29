@@ -187,7 +187,7 @@ def update_session(
 )
 async def get_sessions(
     page: int = Query(1, ge=1),
-    limit: int = Query(10, ge=1, le=50),
+    limit: int = Query(10, ge=1, le=100),
     category: Optional[str] = None,
     difficulty: Optional[str] = None,
     search: Optional[str] = None,
