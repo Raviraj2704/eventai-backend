@@ -1855,3 +1855,22 @@ class NotificationPreference(Base):
     enable_push = Column(Boolean, default=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow)
+
+# ============================================================================
+# TABLE: SessionBookmarks (For the "My Sessions" feature)
+# ============================================================================
+class SessionBookmark(Base):
+    """
+    Allows users to save/bookmark sessions to build their personal itinerary.
+    """
+    __tablename__ = "session_bookmarks"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    session_id = Column(Integer, ForeignKey("sessions.id"), nullable=False, index=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    
+    # Ensure a user can't bookmark the same session twice
+    __table_args__ = (
+        UniqueConstraint('user_id', 'session_id', name='uq_user_session_bookmark'),
+    )    
