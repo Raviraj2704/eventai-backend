@@ -422,7 +422,9 @@ def browse_sessions(
     query = db.query(SessionModel).outerjoin(
         SessionExtras, SessionExtras.session_id == SessionModel.id
     )
-
+        
+    if not getattr(current_user, "is_admin", False):
+        query = query.filter(SessionModel.is_published.is_(True))
     if day:
         try:
             day_start = datetime.strptime(day, "%Y-%m-%d")
@@ -486,6 +488,9 @@ def get_session_detail(
     me = _current_user_id(current_user)
     now = datetime.utcnow()
     session = _get_session_or_404(db, session_id)
+
+    if not getattr(current_user, "is_admin", False) and not session.is_published:
+        raise HTTPException(status_code=404, detail="Session not found")
 
     item = _build_items(db, [session], me, now)[0]
 
