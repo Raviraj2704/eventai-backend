@@ -10,6 +10,7 @@ from app.routes import activity_feed
 from app.routes import partner_hub
 from app.routes import event_info
 import app.models_event_info  # Ensures tables are auto-created
+from app.routes import session_hub
 from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -131,7 +132,7 @@ app.add_middleware(GZipMiddleware, minimum_size=1000)
 from app.routes import (
     auth, sessions, speakers, resources, badges, 
     challenges, leaderboard, learning_paths, ratings,
-    social, announcements, engagement, partners, users, admin, analytics, ai_routes, admin, messages, events, activity_feed
+    social, announcements, engagement, partners, users, admin, analytics, ai_routes, admin, messages, events, activity_feed, session_hub
 )
 # ============================================================================
 # INCLUDE ROUTERS
@@ -164,6 +165,7 @@ app.include_router(ai_routes.router, prefix="/api/v1/ai", tags=["AI Features"])
 app.include_router(admin.router, prefix="/api/v1/admin", tags=["Admin"])
 app.include_router(messages.router, prefix="/api/v1/messages", tags=["Messages"])
 app.include_router(activity_feed.router, prefix="/api/v1/activity", tags=["Activity Feed"])
+app.include_router(session_hub.router, prefix="/api/v1/session-hub", tags=["Session Hub"])
 
 # ============================================================================
 # HEALTH CHECK ENDPOINTS
