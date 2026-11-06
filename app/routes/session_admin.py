@@ -1,19 +1,16 @@
 # ============================================================================
-# Session Admin: create, edit, publish, remove, speaker proposals, photos
+# Session Admin (Production Ready)
 # File: app/routes/session_admin.py
 # Mounted at /api/v1/session-admin
 #
-# GET    /me/roles                    { is_admin, is_speaker }
-# POST   /sessions                    admin: create (draft or published)
-# PUT    /sessions/{id}               admin: edit details
-# GET    /sessions/{id}/manage        admin: full data for the edit form
-# POST   /sessions/{id}/publish       admin: publish a draft
-# DELETE /sessions/{id}               admin: remove (hidden from everyone)
-# POST   /sessions/{id}/image         admin: upload a photo (camera or gallery)
-# POST   /proposals                   speaker or admin: propose a session
-# GET    /proposals                   admin: pending; speaker: own proposals
-# POST   /proposals/{id}/approve      admin: approve and publish
-# POST   /proposals/{id}/reject       admin: reject
+# Status flow:
+#   draft     -> published   (organizer publishes)
+#   proposed  -> published   (organizer approves)
+#   proposed  -> rejected    (organizer rejects, optional note for the speaker)
+#   rejected  -> proposed    (speaker edits and resends)
+#   any       -> deleted     (organizer removes; hidden from everyone)
+#
+# Every change is written to session_admin_audit_logs.
 # ============================================================================
 
 import logging
@@ -24,13 +21,14 @@ from typing import Any, List, Optional
 
 import cloudinary
 import cloudinary.uploader
-from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
+from fastapi import APIRouter, Body, Depends, File, HTTPException, Query, UploadFile
 from pydantic import BaseModel, Field, model_validator
+from sqlalchemy import Column, DateTime, ForeignKey, Integer, String, Text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session as DBSession
 
 from app.database import get_db
-from app.models import Session as SessionModel, Speaker, User
+from app.models import Base, Session as SessionModel, Speaker, User
 from app.routes.auth import get_current_user
 from app.routes.session_hub import SessionExtras
 
@@ -40,6 +38,39 @@ router = APIRouter()
 MB = 1024 * 1024
 MAX_IMAGE_BYTES = 5 * MB
 IMAGE_TYPES = {"image/jpeg", "image/png", "image/webp"}
+
+DRAFT = "draft"
+PROPOSED = "proposed"
+PUBLISHED = "published"
+REJECTED = "rejected"
+DELETED = "deleted"
+
+
+# ============================================================================
+# Audit log (who did what, and when)
+# ============================================================================
+
+class SessionAuditLog(Base):
+    __tablename__ = "session_admin_audit_logs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    session_id = Column(
+        Integer,
+        ForeignKey(f"{SessionModel.__tablename__}.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    actor_user_id = Column(
+        Integer,
+        ForeignKey(f"{User.__tablename__}.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    action = Column(String(40), nullable=False)
+    from_status = Column(String(20), nullable=True)
+    to_status = Column(String(20), nullable=True)
+    note = Column(Text, nullable=True)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
 
 
 # ============================================================================
@@ -67,6 +98,10 @@ class SessionCreate(SessionBase):
     publish: bool = False
 
 
+class RejectRequest(BaseModel):
+    note: Optional[str] = Field(None, max_length=500)
+
+
 # ============================================================================
 # Helpers
 # ============================================================================
@@ -89,7 +124,7 @@ def _check_speaker_user(db: DBSession, user_id: Optional[int]) -> None:
 
 def _get_session(db: DBSession, session_id: int) -> SessionModel:
     session = db.query(SessionModel).filter(SessionModel.id == session_id).first()
-    if session is None or session.status == "deleted":
+    if session is None or session.status == DELETED:
         raise HTTPException(status_code=404, detail="Session not found")
     return session
 
@@ -109,6 +144,27 @@ def _set_extras(db: DBSession, session_id: int, track: Optional[str], tags: List
     extras.updated_at = datetime.utcnow()
 
 
+def _audit(
+    db: DBSession,
+    session_id: int,
+    actor_id: Optional[int],
+    action: str,
+    from_status: Optional[str],
+    to_status: Optional[str],
+    note: Optional[str] = None,
+) -> None:
+    db.add(
+        SessionAuditLog(
+            session_id=session_id,
+            actor_user_id=actor_id,
+            action=action,
+            from_status=from_status,
+            to_status=to_status,
+            note=note,
+        )
+    )
+
+
 def _commit(db: DBSession, action: str, detail: str) -> None:
     try:
         db.commit()
@@ -118,7 +174,21 @@ def _commit(db: DBSession, action: str, detail: str) -> None:
         raise HTTPException(status_code=500, detail=detail)
 
 
-def _payload(s: SessionModel, extras: Optional[SessionExtras]) -> dict:
+def _latest_rejection_note(db: DBSession, session_id: int) -> Optional[str]:
+    row = (
+        db.query(SessionAuditLog.note)
+        .filter(
+            SessionAuditLog.session_id == session_id,
+            SessionAuditLog.action == "rejected",
+        )
+        .order_by(SessionAuditLog.id.desc())
+        .first()
+    )
+    return row[0] if row else None
+
+
+def _payload(db: DBSession, s: SessionModel, extras: Optional[SessionExtras]) -> dict:
+    rejection_note = _latest_rejection_note(db, s.id) if s.status == REJECTED else None
     return {
         "id": s.id,
         "title": s.title,
@@ -132,6 +202,7 @@ def _payload(s: SessionModel, extras: Optional[SessionExtras]) -> dict:
         "speaker_id": s.speaker_id,
         "publish_status": s.status,
         "is_published": bool(s.is_published),
+        "rejection_note": rejection_note,
     }
 
 
@@ -143,6 +214,11 @@ def _apply_fields(s: SessionModel, payload: SessionBase) -> None:
     s.location = (payload.location or "").strip() or None
     s.speaker_id = payload.speaker_id
     s.updated_at = datetime.utcnow()
+
+
+def _user_name(user: User) -> str:
+    full = f"{user.first_name or ''} {user.last_name or ''}".strip()
+    return full or user.username or "Organizer"
 
 
 def _configure_cloudinary() -> None:
@@ -173,7 +249,7 @@ def my_roles(
 
 
 # ============================================================================
-# Admin: create, edit, publish, remove
+# Organizer: create, edit, publish, remove, photo, history
 # ============================================================================
 
 @router.post("/sessions", status_code=201)
@@ -185,6 +261,7 @@ def create_session(
     _require_admin(current_user)
     _check_speaker_user(db, payload.speaker_id)
 
+    new_status = PUBLISHED if payload.publish else DRAFT
     s = SessionModel(
         title=payload.title.strip(),
         description=payload.description.strip(),
@@ -192,12 +269,13 @@ def create_session(
         end_time=payload.end_time,
         location=(payload.location or "").strip() or None,
         speaker_id=payload.speaker_id,
-        status="published" if payload.publish else "draft",
+        status=new_status,
         is_published=payload.publish,
     )
     db.add(s)
     db.flush()
     _set_extras(db, s.id, payload.track, payload.tags)
+    _audit(db, s.id, current_user.id, "created", None, new_status)
     _commit(db, "Create session", "Could not create the session")
     db.refresh(s)
 
@@ -221,6 +299,7 @@ def update_session(
 
     _apply_fields(s, payload)
     _set_extras(db, s.id, payload.track, payload.tags)
+    _audit(db, s.id, current_user.id, "edited", s.status, s.status)
     _commit(db, "Update session", "Could not save the session")
 
     return {"status": "success", "message": "Session saved", "data": {"id": s.id}}
@@ -234,7 +313,7 @@ def manage_session(
 ):
     _require_admin(current_user)
     s = _get_session(db, session_id)
-    return {"status": "success", "data": _payload(s, _get_extras(db, s.id))}
+    return {"status": "success", "data": _payload(db, s, _get_extras(db, s.id))}
 
 
 @router.post("/sessions/{session_id}/publish")
@@ -245,10 +324,19 @@ def publish_session(
 ):
     _require_admin(current_user)
     s = _get_session(db, session_id)
-    s.status = "published"
+    if s.status != DRAFT:
+        raise HTTPException(
+            status_code=400,
+            detail="Only drafts can be published. Proposals are approved from Pending.",
+        )
+
+    previous = s.status
+    s.status = PUBLISHED
     s.is_published = True
     s.updated_at = datetime.utcnow()
+    _audit(db, s.id, current_user.id, "published", previous, PUBLISHED)
     _commit(db, "Publish session", "Could not publish the session")
+
     return {"status": "success", "message": "Session published", "data": {"id": s.id}}
 
 
@@ -260,10 +348,14 @@ def remove_session(
 ):
     _require_admin(current_user)
     s = _get_session(db, session_id)
-    s.status = "deleted"
+
+    previous = s.status
+    s.status = DELETED
     s.is_published = False
     s.updated_at = datetime.utcnow()
+    _audit(db, s.id, current_user.id, "removed", previous, DELETED)
     _commit(db, "Remove session", "Could not remove the session")
+
     return {"status": "success", "message": "Session removed"}
 
 
@@ -310,13 +402,56 @@ async def upload_session_image(
         db.add(extras)
     extras.image_url = url
     extras.updated_at = datetime.utcnow()
+    _audit(db, s.id, current_user.id, "photo_updated", s.status, s.status)
     _commit(db, "Save session image", "Could not save the photo")
 
     return {"status": "success", "data": {"image_url": url}}
 
 
+@router.get("/sessions/{session_id}/history")
+def session_history(
+    session_id: int,
+    db: DBSession = Depends(get_db),
+    current_user: Any = Depends(get_current_user),
+):
+    _require_admin(current_user)
+    exists = db.query(SessionModel.id).filter(SessionModel.id == session_id).first()
+    if exists is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    rows = (
+        db.query(SessionAuditLog)
+        .filter(SessionAuditLog.session_id == session_id)
+        .order_by(SessionAuditLog.id.desc())
+        .limit(200)
+        .all()
+    )
+
+    actor_ids = {r.actor_user_id for r in rows if r.actor_user_id}
+    names = {}
+    if actor_ids:
+        for u in db.query(User).filter(User.id.in_(actor_ids)).all():
+            names[u.id] = _user_name(u)
+
+    return {
+        "status": "success",
+        "data": [
+            {
+                "id": r.id,
+                "action": r.action,
+                "from_status": r.from_status,
+                "to_status": r.to_status,
+                "note": r.note,
+                "actor_name": names.get(r.actor_user_id, "Organizer"),
+                "created_at": r.created_at.isoformat() if r.created_at else None,
+            }
+            for r in rows
+        ],
+    }
+
+
 # ============================================================================
-# Speaker proposals and admin decisions
+# Speakers: propose, edit and resend, see own status
 # ============================================================================
 
 @router.post("/proposals", status_code=201)
@@ -336,19 +471,56 @@ def propose_session(
         end_time=payload.end_time,
         location=(payload.location or "").strip() or None,
         speaker_id=me,
-        status="proposed",
+        status=PROPOSED,
         is_published=False,
     )
     db.add(s)
     db.flush()
     _set_extras(db, s.id, payload.track, payload.tags)
+    _audit(db, s.id, me, "proposed", None, PROPOSED)
     _commit(db, "Propose session", "Could not send your proposal")
     db.refresh(s)
 
     return {
         "status": "success",
         "message": "Your proposal was sent to the organizers",
-        "data": {"id": s.id, "status": "proposed"},
+        "data": {"id": s.id, "status": PROPOSED},
+    }
+
+
+@router.put("/proposals/{session_id}")
+def update_proposal(
+    session_id: int,
+    payload: SessionBase,
+    db: DBSession = Depends(get_db),
+    current_user: Any = Depends(get_current_user),
+):
+    s = db.query(SessionModel).filter(SessionModel.id == session_id).first()
+    if s is None:
+        raise HTTPException(status_code=404, detail="Proposal not found")
+    if s.speaker_id != current_user.id:
+        raise HTTPException(status_code=403, detail="You can only change your own proposals")
+    if s.status not in (PROPOSED, REJECTED):
+        raise HTTPException(
+            status_code=400,
+            detail="This proposal can no longer be changed",
+        )
+
+    previous = s.status
+    _apply_fields(s, payload)
+    s.speaker_id = current_user.id
+    s.status = PROPOSED
+    s.is_published = False
+    _set_extras(db, s.id, payload.track, payload.tags)
+
+    action = "resubmitted" if previous == REJECTED else "edited"
+    _audit(db, s.id, current_user.id, action, previous, PROPOSED)
+    _commit(db, "Update proposal", "Could not save your proposal")
+
+    return {
+        "status": "success",
+        "message": "Your proposal was sent to the organizers again",
+        "data": {"id": s.id, "status": PROPOSED},
     }
 
 
@@ -360,31 +532,50 @@ def list_proposals(
 ):
     me = current_user.id
     if getattr(current_user, "is_admin", False):
-        query = db.query(SessionModel).filter(SessionModel.status == "proposed")
+        query = db.query(SessionModel).filter(SessionModel.status == PROPOSED)
     else:
         query = db.query(SessionModel).filter(
             SessionModel.speaker_id == me,
-            SessionModel.status.in_(["proposed", "rejected", "published"]),
+            SessionModel.status.in_([PROPOSED, REJECTED, PUBLISHED]),
         )
 
     rows = query.order_by(SessionModel.start_time.asc()).limit(limit).all()
     return {
         "status": "success",
-        "data": [_payload(s, _get_extras(db, s.id)) for s in rows],
+        "data": [_payload(db, s, _get_extras(db, s.id)) for s in rows],
     }
 
 
-def _decide(db: DBSession, session_id: int, new_status: str, publish: bool) -> SessionModel:
+# ============================================================================
+# Organizer decisions on proposals
+# ============================================================================
+
+def _decide(
+    db: DBSession,
+    session_id: int,
+    actor_id: int,
+    new_status: str,
+    publish: bool,
+    note: Optional[str] = None,
+) -> SessionModel:
     s = (
         db.query(SessionModel)
-        .filter(SessionModel.id == session_id, SessionModel.status == "proposed")
+        .filter(SessionModel.id == session_id, SessionModel.status == PROPOSED)
         .first()
     )
     if s is None:
-        raise HTTPException(status_code=404, detail="This proposal was not found or was already decided")
+        raise HTTPException(
+            status_code=404,
+            detail="This proposal was not found or was already decided",
+        )
+
+    previous = s.status
     s.status = new_status
     s.is_published = publish
     s.updated_at = datetime.utcnow()
+
+    action = "approved" if new_status == PUBLISHED else "rejected"
+    _audit(db, s.id, actor_id, action, previous, new_status, note)
     _commit(db, "Decide proposal", "Could not update the proposal")
     db.refresh(s)
     return s
@@ -397,16 +588,26 @@ def approve_proposal(
     current_user: Any = Depends(get_current_user),
 ):
     _require_admin(current_user)
-    s = _decide(db, session_id, "published", True)
-    return {"status": "success", "message": "Session approved and published", "data": _payload(s, _get_extras(db, s.id))}
+    s = _decide(db, session_id, current_user.id, PUBLISHED, True)
+    return {
+        "status": "success",
+        "message": "Session approved and published",
+        "data": _payload(db, s, _get_extras(db, s.id)),
+    }
 
 
 @router.post("/proposals/{session_id}/reject")
 def reject_proposal(
     session_id: int,
+    payload: Optional[RejectRequest] = Body(default=None),
     db: DBSession = Depends(get_db),
     current_user: Any = Depends(get_current_user),
 ):
     _require_admin(current_user)
-    s = _decide(db, session_id, "rejected", False)
-    return {"status": "success", "message": "Proposal rejected", "data": {"id": s.id}}
+    note = (payload.note or "").strip() if payload and payload.note else None
+    s = _decide(db, session_id, current_user.id, REJECTED, False, note or None)
+    return {
+        "status": "success",
+        "message": "Proposal rejected",
+        "data": {"id": s.id, "status": REJECTED},
+    }

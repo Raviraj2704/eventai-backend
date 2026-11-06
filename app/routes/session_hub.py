@@ -426,7 +426,7 @@ def browse_sessions(
     if not getattr(current_user, "is_admin", False):
         query = query.filter(SessionModel.is_published.is_(True))
 
-    query = query.filter(SessionModel.status.notin_(["deleted", "proposed", "rejected"]))
+    query = query.filter(SessionModel.status.notin_(["deleted", "draft", "proposed", "rejected"]))
 
     if day:
         try:
@@ -495,7 +495,7 @@ def get_session_detail(
     if not getattr(current_user, "is_admin", False) and not session.is_published:
         raise HTTPException(status_code=404, detail="Session not found")
 
-    if session.status in ("deleted", "proposed", "rejected"):
+    if session.status in ("deleted", "draft", "proposed", "rejected"):
         raise HTTPException(status_code=404, detail="Session not found")
 
     item = _build_items(db, [session], me, now)[0]
@@ -533,7 +533,7 @@ def my_schedule(
         db.query(SessionModel)
         .join(SessionSchedule, SessionSchedule.session_id == SessionModel.id)
         .filter(SessionSchedule.user_id == me)
-        .filter(SessionModel.status.notin_(["deleted", "proposed", "rejected"]))
+        .filter(SessionModel.status.notin_(["deleted", "draft", "proposed", "rejected"]))
     )
     total = query.count()
     rows = (
@@ -564,7 +564,7 @@ def my_bookmarks(
         db.query(SessionModel)
         .join(SessionBookmark, SessionBookmark.session_id == SessionModel.id)
         .filter(SessionBookmark.user_id == me)
-        .filter(SessionModel.status.notin_(["deleted", "proposed", "rejected"]))
+        .filter(SessionModel.status.notin_(["deleted", "draft", "proposed", "rejected"]))
     )
     total = query.count()
     rows = (
