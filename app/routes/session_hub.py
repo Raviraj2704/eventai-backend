@@ -58,7 +58,7 @@ class SessionExtras(Base):
     )
     track = Column(String(100), nullable=True, index=True)
     tags = Column(String(255), nullable=True)
-    image_url = Column(String(500), nullable=True)
+    image_url = Column(String(2000), nullable=True)
     is_live = Column(Boolean, nullable=False, default=False)
     stream_url = Column(String(500), nullable=True)
     updated_at = Column(DateTime, nullable=False, default=datetime.utcnow)
@@ -157,7 +157,8 @@ class LiveUpdate(BaseModel):
 class DetailsUpdate(BaseModel):
     track: Optional[str] = Field(default=None, max_length=100)
     tags: Optional[List[str]] = None
-    image_url: Optional[str] = Field(default=None, max_length=500)
+    image_url: Optional[str] = Field(default=None, max_length=2000)
+    images: Optional[List[str]] = None
 
 
 # ============================================================================
@@ -208,6 +209,12 @@ def _get_or_create_extras(db: DBSession, session_id: int) -> SessionExtras:
     return extras
 
 
+def _parse_images(raw: Optional[str]) -> List[str]:
+    if not raw:
+        return []
+    return [u.strip() for u in raw.split(",") if u and u.strip()][:5]
+
+
 def _day_label(day) -> str:
     n = day.day
     if 11 <= n % 100 <= 13:
@@ -237,19 +244,64 @@ def _status_of(is_live: bool, end: Optional[datetime], now: datetime) -> str:
     return "upcoming"
 
 
-def _speaker_names(db: DBSession, speaker_ids: List[Optional[int]]) -> Dict[int, str]:
+def _speaker_profiles(db: DBSession, speaker_ids: List[Optional[int]]) -> Dict[int, dict]:
     ids = {i for i in speaker_ids if i}
     if not ids:
         return {}
-    names: Dict[int, str] = {}
-    for sp in db.query(Speaker).filter(Speaker.id.in_(ids)).all():
-        name = getattr(sp, "name", None)
-        if not name:
-            first = getattr(sp, "first_name", "") or ""
-            last = getattr(sp, "last_name", "") or ""
-            name = f"{first} {last}".strip() or "Speaker"
-        names[sp.id] = name
-    return names
+    profiles: Dict[int, dict] = {}
+
+    # Check both Speaker.id and Speaker.user_id + User table
+    speakers_by_id = {
+        sp.id: sp for sp in db.query(Speaker).filter(Speaker.id.in_(ids)).all()
+    }
+    speakers_by_uid = {
+        sp.user_id: sp for sp in db.query(Speaker).filter(Speaker.user_id.in_(ids)).all()
+        if getattr(sp, "user_id", None) is not None
+    }
+
+    user_ids_to_fetch = set(ids)
+    for sp in list(speakers_by_id.values()) + list(speakers_by_uid.values()):
+        if getattr(sp, "user_id", None):
+            user_ids_to_fetch.add(sp.user_id)
+
+    users_map = {
+        u.id: u for u in db.query(User).filter(User.id.in_(user_ids_to_fetch)).all()
+    }
+
+    for sid in ids:
+        sp = speakers_by_id.get(sid) or speakers_by_uid.get(sid)
+        u = users_map.get(getattr(sp, "user_id", None) if sp else sid) or users_map.get(sid)
+
+        name = getattr(sp, "name", None) if sp else None
+        if not name and u:
+            first = getattr(u, "first_name", "") or ""
+            last = getattr(u, "last_name", "") or ""
+            name = f"{first} {last}".strip() or getattr(u, "username", None)
+        name = name or "Speaker"
+
+        company = (
+            (getattr(sp, "company", None) if sp else None)
+            or (getattr(u, "company", None) if u else None)
+            or ""
+        )
+        designation = (
+            (getattr(sp, "title", None) or getattr(sp, "designation", None) if sp else None)
+            or (getattr(u, "job_title", None) or getattr(u, "designation", None) if u else None)
+            or "Speaker"
+        )
+        avatar_url = (
+            (getattr(sp, "avatar_url", None) if sp else None)
+            or (getattr(u, "avatar_url", None) or getattr(u, "profile_picture", None) if u else None)
+        )
+
+        profiles[sid] = {
+            "id": sid,
+            "name": name,
+            "company": company,
+            "designation": designation,
+            "avatar_url": avatar_url,
+        }
+    return profiles
 
 
 def _build_items(db: DBSession, sessions: List[SessionModel], me_id: Optional[int], now: datetime) -> List[dict]:
@@ -293,7 +345,7 @@ def _build_items(db: DBSession, sessions: List[SessionModel], me_id: Optional[in
         if avatar_url and len(bucket) < 4:
             bucket.append(avatar_url)
 
-    speaker_names = _speaker_names(db, [getattr(s, "speaker_id", None) for s in sessions])
+    speaker_map = _speaker_profiles(db, [getattr(s, "speaker_id", None) for s in sessions])
 
     items = []
     for s in sessions:
@@ -302,8 +354,10 @@ def _build_items(db: DBSession, sessions: List[SessionModel], me_id: Optional[in
         tags: List[str] = []
         if extras and extras.tags:
             tags = [t.strip() for t in extras.tags.split(",") if t.strip()]
+        images = _parse_images(extras.image_url if extras else None)
         start = _naive(s.start_time)
         speaker_id = getattr(s, "speaker_id", None)
+        sp_info = speaker_map.get(speaker_id)
 
         items.append({
             "id": s.id,
@@ -316,11 +370,14 @@ def _build_items(db: DBSession, sessions: List[SessionModel], me_id: Optional[in
             "time_label": _time_label(s.start_time, s.end_time),
             "track": extras.track if extras and extras.track else "General",
             "tags": tags,
-            "image_url": extras.image_url if extras else None,
+            "image_url": images[0] if images else None,
+            "images": images,
             "is_live": is_live,
             "status": _status_of(is_live, s.end_time, now),
+            "publish_status": getattr(s, "status", "published"),
+            "is_published": bool(getattr(s, "is_published", True)),
             "speaker_id": speaker_id,
-            "speaker_name": speaker_names.get(speaker_id),
+            "speaker_name": sp_info["name"] if sp_info else None,
             "is_scheduled": s.id in scheduled,
             "is_bookmarked": s.id in bookmarked,
             "attendee_count": counts.get(s.id, 0),
@@ -368,12 +425,15 @@ def list_days(
     current_user: Any = Depends(get_current_user),
 ):
     _current_user_id(current_user)
-    rows = (
-        db.query(SessionModel.start_time)
-        .filter(SessionModel.start_time.isnot(None))
-        .order_by(SessionModel.start_time.asc())
-        .all()
-    )
+    query = db.query(SessionModel.start_time).filter(SessionModel.start_time.isnot(None))
+    if getattr(current_user, "is_admin", False):
+        query = query.filter(SessionModel.status.notin_(["deleted", "rejected"]))
+    else:
+        query = query.filter(
+            SessionModel.is_published.is_(True),
+            SessionModel.status.notin_(["deleted", "proposed", "rejected", "draft"]),
+        )
+    rows = query.order_by(SessionModel.start_time.asc()).all()
     days = []
     for (start,) in rows:
         day = _naive(start).date()
@@ -423,10 +483,15 @@ def browse_sessions(
         SessionExtras, SessionExtras.session_id == SessionModel.id
     )
 
-    if not getattr(current_user, "is_admin", False):
-        query = query.filter(SessionModel.is_published.is_(True))
-
-    query = query.filter(SessionModel.status.notin_(["deleted", "draft", "proposed", "rejected"]))
+    if getattr(current_user, "is_admin", False):
+        # Admins can see published, drafts, and proposed sessions
+        query = query.filter(SessionModel.status.notin_(["deleted", "rejected"]))
+    else:
+        # Attendees only see approved & published sessions
+        query = query.filter(
+            SessionModel.is_published.is_(True),
+            SessionModel.status.notin_(["deleted", "proposed", "rejected", "draft"]),
+        )
 
     if day:
         try:
@@ -489,25 +554,38 @@ def get_session_detail(
     current_user: Any = Depends(get_current_user),
 ):
     me = _current_user_id(current_user)
+    is_admin = bool(getattr(current_user, "is_admin", False))
     now = datetime.utcnow()
     session = _get_session_or_404(db, session_id)
 
-    if not getattr(current_user, "is_admin", False) and not session.is_published:
+    if session.status == "deleted":
         raise HTTPException(status_code=404, detail="Session not found")
 
-    if session.status in ("deleted", "draft", "proposed", "rejected"):
-        raise HTTPException(status_code=404, detail="Session not found")
+    if not is_admin:
+        if not session.is_published or session.status in ("proposed", "rejected", "draft"):
+            raise HTTPException(status_code=404, detail="Session not found")
 
     item = _build_items(db, [session], me, now)[0]
+    extras = _get_extras(db, session_id)
 
     speaker_id = getattr(session, "speaker_id", None)
-    names = _speaker_names(db, [speaker_id])
-    speakers = [{"id": speaker_id, "name": names[speaker_id]}] if speaker_id in names else []
+    profiles = _speaker_profiles(db, [speaker_id])
+    speakers = [profiles[speaker_id]] if speaker_id in profiles else []
 
     checked = db.query(SessionSchedule.checked_in_at).filter(
         SessionSchedule.user_id == me,
         SessionSchedule.session_id == session_id,
     ).first()
+
+    checked_in_count = (
+        db.query(func.count(SessionSchedule.id))
+        .filter(
+            SessionSchedule.session_id == session_id,
+            SessionSchedule.checked_in_at.isnot(None),
+        )
+        .scalar()
+        or 0
+    )
 
     state = _reaction_state(db, session_id, me)
     item.update({
@@ -515,7 +593,10 @@ def get_session_detail(
         "reactions": state["reactions"],
         "my_reactions": state["my_reactions"],
         "is_checked_in": bool(checked and checked[0]),
+        "checked_in_count": int(checked_in_count),
         "has_stream": bool(item["is_live"]),
+        "stream_url": extras.stream_url if (is_admin and extras) else None,
+        "is_admin_viewer": is_admin,
     })
     return {"status": "success", "data": item}
 
@@ -533,7 +614,7 @@ def my_schedule(
         db.query(SessionModel)
         .join(SessionSchedule, SessionSchedule.session_id == SessionModel.id)
         .filter(SessionSchedule.user_id == me)
-        .filter(SessionModel.status.notin_(["deleted", "draft", "proposed", "rejected"]))
+        .filter(SessionModel.status.notin_(["deleted", "proposed", "rejected", "draft"]))
     )
     total = query.count()
     rows = (
@@ -564,7 +645,7 @@ def my_bookmarks(
         db.query(SessionModel)
         .join(SessionBookmark, SessionBookmark.session_id == SessionModel.id)
         .filter(SessionBookmark.user_id == me)
-        .filter(SessionModel.status.notin_(["deleted", "draft", "proposed", "rejected"]))
+        .filter(SessionModel.status.notin_(["deleted", "proposed", "rejected", "draft"]))
     )
     total = query.count()
     rows = (
@@ -937,7 +1018,10 @@ def update_details(
     if payload.tags is not None:
         cleaned = ",".join(t.strip() for t in payload.tags if t.strip())
         extras.tags = cleaned[:255] or None
-    if payload.image_url is not None:
+    if payload.images is not None:
+        cleaned_imgs = ",".join(u.strip() for u in payload.images if u and u.strip())
+        extras.image_url = cleaned_imgs[:2000] or None
+    elif payload.image_url is not None:
         extras.image_url = payload.image_url.strip() or None
     extras.updated_at = datetime.utcnow()
 
@@ -970,5 +1054,8 @@ def set_live(
     return {
         "status": "success",
         "message": "Live status updated",
-        "data": {"is_live": bool(extras.is_live)},
+        "data": {
+            "is_live": bool(extras.is_live),
+            "stream_url": extras.stream_url,
+        },
     }
