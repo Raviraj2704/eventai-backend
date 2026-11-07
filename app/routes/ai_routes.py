@@ -217,22 +217,6 @@ def _build_smart_db_response(
     )
     return reply, ["Browse sessions", "Find people to network with", "My profile"]
 
-class SessionQuiz(Base):
-    __tablename__ = "session_quizzes"
-
-    id = Column(Integer, primary_key=True, index=True)
-    session_id = Column(
-        Integer,
-        ForeignKey(f"{SessionEvent.__tablename__}.id", ondelete="CASCADE"),
-        nullable=False,
-        unique=True,
-        index=True,
-    )
-    title = Column(String(255), nullable=True)
-    questions = Column(JSON, nullable=False, default=list)
-    created_by = Column(Integer, ForeignKey(f"{UserModel.__tablename__}.id", ondelete="SET NULL"), nullable=True)
-    updated_at = Column(DateTime, nullable=False, default=datetime.utcnow)    
-
 
 # ============================================================================
 # REAL AI RECOMMENDATIONS - Using User Behavior Analysis
