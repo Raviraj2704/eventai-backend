@@ -15,7 +15,7 @@ from app.models import Base
 from groq import Groq
 from app.database import get_db
 from app.models import (
-    User, SessionAttendance, Rating,
+    User, Session as SessionModel, SessionAttendance, Rating,
     User as UserModel, Challenge, Resource, Speaker, SessionQuiz
 )
 from app.schemas import UserResponse
