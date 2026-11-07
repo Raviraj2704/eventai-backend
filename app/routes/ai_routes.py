@@ -15,7 +15,7 @@ from app.models import Base
 from groq import Groq
 from app.database import get_db
 from app.models import (
-    User, Session as SessionModel, SessionAttendance, Rating,
+    User, SessionEvent, SessionAttendance, Rating,
     User as UserModel, Challenge, Resource, Speaker, SessionQuiz
 )
 from app.schemas import UserResponse
@@ -179,7 +179,7 @@ def _build_smart_db_response(
 
     # 3. Session / Schedule / Recommendation queries
     if any(k in msg for k in ["session", "schedule", "recommend", "browse", "talk", "workshop", "agenda", "event"]):
-        sessions = db.query(SessionModel).order_by(SessionModel.start_time.asc()).limit(3).all()
+        sessions = db.query(SessionEvent).order_by(SessionEvent.start_time.asc()).limit(3).all()
         if sessions:
             s_lines = [
                 f"• {s.title} ({getattr(s, 'category', 'Workshop')} — {getattr(s, 'location', 'Main Hall')})"
@@ -208,7 +208,7 @@ def _build_smart_db_response(
         return reply, ["Browse sessions", "Find people to network with", "My profile"]
 
     # 5. Greeting or general question
-    sessions_count = db.query(func.count(SessionModel.id)).scalar() or 0
+    sessions_count = db.query(func.count(SessionEvent.id)).scalar() or 0
     users_count = db.query(func.count(UserModel.id)).scalar() or 0
     reply = (
         f"Hi {full_name}! 👋 There are currently {sessions_count} sessions scheduled "
@@ -223,7 +223,7 @@ class SessionQuiz(Base):
     id = Column(Integer, primary_key=True, index=True)
     session_id = Column(
         Integer,
-        ForeignKey(f"{SessionModel.__tablename__}.id", ondelete="CASCADE"),
+        ForeignKey(f"{SessionEvent.__tablename__}.id", ondelete="CASCADE"),
         nullable=False,
         unique=True,
         index=True,
@@ -257,9 +257,9 @@ async def get_ai_recommendations(
         attended_session_ids = [a.session_id for a in user_attended]
 
         # Find unattended sessions
-        query = db.query(SessionModel)
+        query = db.query(SessionEvent)
         if attended_session_ids:
-            query = query.filter(~SessionModel.id.in_(attended_session_ids))
+            query = query.filter(~SessionEvent.id.in_(attended_session_ids))
         unattended_sessions = query.all()
 
         if not unattended_sessions:

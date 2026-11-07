@@ -1875,3 +1875,18 @@ class SessionBookmark(Base):
         UniqueConstraint('user_id', 'session_id', name='uq_user_session_bookmark'),
     )    
 
+class SessionQuiz(Base):
+    __tablename__ = "session_quizzes"
+
+    id = Column(Integer, primary_key=True, index=True)
+    session_id = Column(
+        Integer,
+        ForeignKey("sessions.id", ondelete="CASCADE"),
+        nullable=False,
+        unique=True,
+        index=True,
+    )
+    title = Column(String(255), nullable=True)
+    questions = Column(JSON, nullable=False, default=list)
+    created_by = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    updated_at = Column(DateTime, nullable=False, default=datetime.utcnow)
