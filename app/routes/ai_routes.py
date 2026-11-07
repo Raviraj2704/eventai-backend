@@ -828,20 +828,74 @@ Return ONLY valid JSON matching this schema:
         except Exception as e:
             logger.error(f"Failed to parse Groq quiz: {e}")
 
-    # Fallback template if LLM output fails
-    if not questions:
+    # Dynamic Topic-Specific Fallback if LLM output fails
+    if not questions or len(questions) < 5:
+        title = session.title or "Tech Session"
+        desc = (session.description or "core technical concepts and practical implementation").strip()
+        
+        # Split description into bite-sized snippets or use title words
+        snippet = desc[:60] if len(desc) > 10 else f"advanced concepts in {title}"
+        
         questions = [
             {
-                "question": f"What is the core takeaway of '{session.title}'?",
+                "question": f"What is the primary focus of the session '{title}'?",
                 "options": [
-                    (session.description or "Best practices and fundamentals")[:50],
-                    "Legacy database migrations",
-                    "Unrelated legacy frameworks",
-                    "Hardware networking cables"
+                    snippet,
+                    "Completely unrelated legacy systems",
+                    "Manual hardware assembly",
+                    "Non-technical administrative tasks"
                 ],
                 "correct_answer": 0,
-                "explanation": "Derived directly from the session curriculum.",
-                "hint": "Check the session description."
+                "explanation": f"The session specifically centers on {snippet}.",
+                "hint": "Refer to the main title and overview."
+            },
+            {
+                "question": f"Which core architecture or framework is most central to '{title}'?",
+                "options": [
+                    title,
+                    "Obsolete mainframe protocols",
+                    "Basic static HTML files without logic",
+                    "Offline paper documentation"
+                ],
+                "correct_answer": 0,
+                "explanation": f"'{title}' deals directly with modern implementation patterns.",
+                "hint": "Look at the session title."
+            },
+            {
+                "question": "What is a recommended approach when implementing the concepts discussed in this session?",
+                "options": [
+                    "Following best practices and testing incrementally",
+                    "Ignoring security and error handling",
+                    "Hardcoding all credentials",
+                    "Avoiding unit tests entirely"
+                ],
+                "correct_answer": 0,
+                "explanation": "Incremental testing and best practices ensure stable architectures.",
+                "hint": "Think about reliable software engineering."
+            },
+            {
+                "question": f"How does mastering '{title}' benefit a modern developer?",
+                "options": [
+                    "Improves system scalability, efficiency, and design",
+                    "Decreases application performance",
+                    "Increases code duplication",
+                    "Removes all need for version control"
+                ],
+                "correct_answer": 0,
+                "explanation": "Mastering modern tooling directly improves backend performance and design.",
+                "hint": "Focus on engineering value."
+            },
+            {
+                "question": "What is the best next step after attending this session?",
+                "options": [
+                    "Building a hands-on prototype integrating these patterns",
+                    "Forgetting everything learned",
+                    "Deleting your repository",
+                    "Switching to an unrelated career"
+                ],
+                "correct_answer": 0,
+                "explanation": "Hands-on implementation solidifies theoretical architecture.",
+                "hint": "Action-oriented learning."
             }
         ]
 
