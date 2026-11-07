@@ -1867,7 +1867,7 @@ class SessionBookmark(Base):
     
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
-    session_id = Column(Integer, ForeignKey("sessions.id"), nullable=False, index=True)
+    session_id = Column(Integer, ForeignKey("session_events.id"), nullable=False, index=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     
     # Ensure a user can't bookmark the same session twice
@@ -1892,13 +1892,13 @@ class SessionEvent(Base):
     feedbacks = relationship("SessionFeedback", back_populates="session")
 
 class Speaker(Base):
-    __tablename__ = "speakers"
+    __tablename__ = "session_event_speakers"
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String)
     company = Column(String, nullable=True)
     avatar_url = Column(String, nullable=True)
     is_moderator = Column(Boolean, default=False)
-    session_id = Column(Integer, ForeignKey("sessions.id"))
+    session_id = Column(Integer, ForeignKey("session_events.id"))
     
     session = relationship("SessionEvent", back_populates="speakers")
 
@@ -1906,7 +1906,7 @@ class SessionBookmark(Base):
     __tablename__ = "session_bookmarks"
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id"))
-    session_id = Column(Integer, ForeignKey("sessions.id"))
+    session_id = Column(Integer, ForeignKey("session_events.id"))
     
     session = relationship("SessionEvent", back_populates="bookmarks")
 
@@ -1914,7 +1914,7 @@ class SessionFeedback(Base):
     __tablename__ = "session_feedbacks"
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id"))
-    session_id = Column(Integer, ForeignKey("sessions.id"))
+    session_id = Column(Integer, ForeignKey("session_events.id"))
     rating = Column(Integer)
     review = Column(Text, nullable=True)
     
