@@ -1876,7 +1876,7 @@ class SessionBookmark(Base):
     )    
 
 class SessionEvent(Base):
-    __tablename__ = "sessions"
+    __tablename__ = "session_events"
     id = Column(Integer, primary_key=True, index=True)
     title = Column(String, index=True)
     date = Column(String)  # e.g., "15th Oct Day 1"
