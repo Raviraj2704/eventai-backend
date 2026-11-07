@@ -81,7 +81,6 @@ def get_activity_feed(
         logger.error("Get activity feed error: %s", exc)
         raise HTTPException(status_code=500, detail="Could not load the activity feed")
 
-
 @router.get("/leaderboard/top")
 def get_top_leaderboard(
     limit: int = Query(3, ge=1, le=10),
@@ -107,13 +106,22 @@ def get_top_leaderboard(
         data = []
         for index, row in enumerate(rows, start=1):
             user = users.get(row.user_id)
-            data.append({
-                "rank": index,
-                "user_id": row.user_id,
-                "name": _author_name(user),
-                "avatar_url": user.avatar_url if user else None,
-                "total_points": row.total_points or 0,
-            })
+        
+        real_name = "Attendee"
+        real_avatar = None
+        if user:
+            first = getattr(user, "first_name", "") or ""
+            last = getattr(user, "last_name", "") or ""
+            real_name = getattr(user, "full_name", None) or f"{first} {last}".strip() or getattr(user, "username", "Attendee") or "Attendee"
+            real_avatar = getattr(user, "avatar_url", None) or getattr(user, "profile_picture", None)
+
+        data.append({
+            "rank": index,
+            "user_id": row.user_id,
+            "name": real_name,
+            "avatar_url": real_avatar,
+            "total_points": row.total_points or 0,
+        })
 
         return {"status": "success", "data": data}
     except Exception as exc:
