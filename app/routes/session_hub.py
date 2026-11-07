@@ -29,6 +29,8 @@ from sqlalchemy import (
 )
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session as DBSession
+from sqlalchemy import text
+import json
 
 from app.database import get_db
 from app.models import Base, Session as SessionModel, Speaker, User
@@ -1059,3 +1061,59 @@ def set_live(
             "stream_url": extras.stream_url,
         },
     }
+
+@router.get("/polls")
+def get_polls(db: DBSession = Depends(get_db)):
+    try:
+        # Fetch polls using raw SQL to avoid needing a new SQLAlchemy model
+        result = db.execute(text("SELECT id, question, options, created_by FROM polls ORDER BY id DESC")).fetchall()
+        polls_data = []
+        for row in result:
+            polls_data.append({
+                "id": row[0],
+                "question": row[1],
+                "options": row[2] if isinstance(row[2], list) else json.loads(row[2]),
+                "has_voted": False # Simplified for frontend
+            })
+        return {"status": "success", "data": polls_data}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+@router.post("/polls")
+def create_poll(poll_data: dict, db: DBSession = Depends(get_db)):
+    try:
+        options_json = json.dumps([{"text": opt, "votes": 0} for opt in poll_data.get("options", [])])
+        db.execute(
+            text("INSERT INTO polls (question, options) VALUES (:q, :opts)"),
+            {"q": poll_data.get("question"), "opts": options_json}
+        )
+        db.commit()
+        return {"status": "success"}
+    except Exception as e:
+        db.rollback()
+        return {"status": "error", "message": str(e)}
+
+@router.post("/polls/{poll_id}/vote")
+def vote_poll(poll_id: int, vote_data: dict, db: DBSession = Depends(get_db)):
+    try:
+        poll = db.execute(text("SELECT options FROM polls WHERE id = :id"), {"id": poll_id}).fetchone()
+        if not poll:
+            return {"status": "error", "message": "Poll not found"}
+        
+        options = poll[0] if isinstance(poll[0], list) else json.loads(poll[0])
+        idx = vote_data.get("option_index")
+        
+        if 0 <= idx < len(options):
+            options[idx]["votes"] = options[idx].get("votes", 0) + 1
+            db.execute(text("UPDATE polls SET options = :opts WHERE id = :id"), {"opts": json.dumps(options), "id": poll_id})
+            db.commit()
+        return {"status": "success"}
+    except Exception as e:
+        db.rollback()
+        return {"status": "error", "message": str(e)}
+
+@router.delete("/polls/{poll_id}")
+def delete_poll(poll_id: int, db: DBSession = Depends(get_db)):
+    db.execute(text("DELETE FROM polls WHERE id = :id"), {"id": poll_id})
+    db.commit()
+    return {"status": "success"}
