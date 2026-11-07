@@ -180,7 +180,7 @@ def _build_smart_db_response(
 
     # 3. Session / Schedule / Recommendation queries
     if any(k in msg for k in ["session", "schedule", "recommend", "browse", "talk", "workshop", "agenda", "event"]):
-        sessions = db.query(SessionEvent).order_by(SessionEvent.start_time.asc()).limit(3).all()
+        sessions = db.query(SessionModel).order_by(SessionModel.start_time.asc()).limit(3).all()
         if sessions:
             s_lines = [
                 f"• {s.title} ({getattr(s, 'category', 'Workshop')} — {getattr(s, 'location', 'Main Hall')})"
@@ -209,7 +209,7 @@ def _build_smart_db_response(
         return reply, ["Browse sessions", "Find people to network with", "My profile"]
 
     # 5. Greeting or general question
-    sessions_count = db.query(func.count(SessionEvent.id)).scalar() or 0
+    sessions_count = db.query(func.count(SessionModel.id)).scalar() or 0
     users_count = db.query(func.count(UserModel.id)).scalar() or 0
     reply = (
         f"Hi {full_name}! 👋 There are currently {sessions_count} sessions scheduled "
@@ -242,9 +242,10 @@ async def get_ai_recommendations(
         attended_session_ids = [a.session_id for a in user_attended]
 
         # Find unattended sessions    
-        query = db.query(SessionEvent)
+        # Find unattended sessions
+        query = db.query(SessionModel)
         if attended_session_ids:
-            query = query.filter(~SessionEvent.id.in_(attended_session_ids))
+            query = query.filter(~SessionModel.id.in_(attended_session_ids))
         unattended_sessions = query.all()
 
         if not unattended_sessions:
