@@ -871,3 +871,36 @@ class NotificationPreferenceUpdate(BaseModel):
     enable_announcements: Optional[bool] = None
     enable_email: Optional[bool] = None
     enable_push: Optional[bool] = None    
+
+class SpeakerResponse(BaseModel):
+    id: int
+    name: str
+    company: Optional[str] = None
+    avatar_url: Optional[str] = None
+    is_moderator: bool
+
+    class Config:
+        from_attributes = True
+
+class SessionResponse(BaseModel):
+    id: int
+    title: str
+    date: str
+    start_time: str
+    end_time: str
+    track: str
+    location: str
+    is_live: bool
+    description: Optional[str] = None
+    speakers: List[SpeakerResponse] = []
+
+    class Config:
+        from_attributes = True
+
+# These fix the 422 errors by telling FastAPI to expect JSON payloads
+class RateRequest(BaseModel):
+    rating: int
+    review: Optional[str] = None
+
+class AttendRequest(BaseModel):
+    user_id: int    

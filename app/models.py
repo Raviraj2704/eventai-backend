@@ -1874,3 +1874,48 @@ class SessionBookmark(Base):
     __table_args__ = (
         UniqueConstraint('user_id', 'session_id', name='uq_user_session_bookmark'),
     )    
+
+class SessionEvent(Base):
+    __tablename__ = "sessions"
+    id = Column(Integer, primary_key=True, index=True)
+    title = Column(String, index=True)
+    date = Column(String)  # e.g., "15th Oct Day 1"
+    start_time = Column(String)
+    end_time = Column(String)
+    track = Column(String) # e.g., "Foundational Track"
+    location = Column(String)
+    is_live = Column(Boolean, default=False) # Admin toggles this
+    description = Column(Text, nullable=True)
+    
+    speakers = relationship("Speaker", back_populates="session")
+    bookmarks = relationship("SessionBookmark", back_populates="session")
+    feedbacks = relationship("SessionFeedback", back_populates="session")
+
+class Speaker(Base):
+    __tablename__ = "speakers"
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String)
+    company = Column(String, nullable=True)
+    avatar_url = Column(String, nullable=True)
+    is_moderator = Column(Boolean, default=False)
+    session_id = Column(Integer, ForeignKey("sessions.id"))
+    
+    session = relationship("SessionEvent", back_populates="speakers")
+
+class SessionBookmark(Base):
+    __tablename__ = "session_bookmarks"
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"))
+    session_id = Column(Integer, ForeignKey("sessions.id"))
+    
+    session = relationship("SessionEvent", back_populates="bookmarks")
+
+class SessionFeedback(Base):
+    __tablename__ = "session_feedbacks"
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"))
+    session_id = Column(Integer, ForeignKey("sessions.id"))
+    rating = Column(Integer)
+    review = Column(Text, nullable=True)
+    
+    session = relationship("SessionEvent", back_populates="feedbacks")    

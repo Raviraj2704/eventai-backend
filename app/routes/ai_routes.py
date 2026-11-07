@@ -4,18 +4,19 @@
 
 from fastapi import APIRouter, Depends, HTTPException, Query, BackgroundTasks
 from sqlalchemy.orm import Session
-from sqlalchemy import func, and_
+from sqlalchemy import String, func, and_
 from datetime import datetime, timedelta
 import logging
 import json
 import os
 from typing import List, Optional, Any
-
+from sqlalchemy import Column, Integer, ForeignKey, Text, JSON, Boolean, DateTime
+from app.models import Base
 from groq import Groq
 from app.database import get_db
 from app.models import (
     User, Session as SessionModel, SessionAttendance, Rating,
-    User as UserModel, Challenge, Resource, Speaker
+    User as UserModel, Challenge, Resource, Speaker, SessionQuiz
 )
 from app.schemas import UserResponse
 from app.routes.auth import get_current_user
@@ -215,6 +216,22 @@ def _build_smart_db_response(
         f"'Find people to network with', or show 'My profile'!"
     )
     return reply, ["Browse sessions", "Find people to network with", "My profile"]
+
+class SessionQuiz(Base):
+    __tablename__ = "session_quizzes"
+
+    id = Column(Integer, primary_key=True, index=True)
+    session_id = Column(
+        Integer,
+        ForeignKey(f"{SessionModel.__tablename__}.id", ondelete="CASCADE"),
+        nullable=False,
+        unique=True,
+        index=True,
+    )
+    title = Column(String(255), nullable=True)
+    questions = Column(JSON, nullable=False, default=list)
+    created_by = Column(Integer, ForeignKey(f"{UserModel.__tablename__}.id", ondelete="SET NULL"), nullable=True)
+    updated_at = Column(DateTime, nullable=False, default=datetime.utcnow)    
 
 
 # ============================================================================
@@ -510,6 +527,11 @@ Respond ONLY with valid JSON, no markdown."""
 # REAL QUIZ GENERATION
 # ============================================================================
 
+class QuizSaveRequest(BaseModel):
+    title: Optional[str] = None
+    questions: List[dict]
+
+
 @router.get("/sessions/{session_id}/quiz")
 async def get_session_quiz(
     session_id: int,
@@ -521,64 +543,43 @@ async def get_session_quiz(
         if not session:
             raise HTTPException(status_code=404, detail="Session not found")
 
-        questions = []
-        quiz_text = _call_groq_with_fallback(
-            messages=[{
-                "role": "user",
-                "content": f"""Create a 5-question multiple-choice quiz for this event session:
+        # 1. Check if an organizer has created/saved a quiz for this session
+        db_quiz = db.query(SessionQuiz).filter(SessionQuiz.session_id == session_id).first()
+        
+        is_admin = bool(getattr(current_user, "is_admin", False) or getattr(current_user, "role", "") == "admin")
 
-Title: {session.title}
-Description: {getattr(session, 'description', '')}
+        if db_quiz and db_quiz.questions:
+            return {
+                "status": "success",
+                "is_admin": is_admin,
+                "data": {
+                    "id": db_quiz.id,
+                    "session_id": session_id,
+                    "title": db_quiz.title or f"Quiz: {session.title}",
+                    "total_questions": len(db_quiz.questions),
+                    "questions": db_quiz.questions,
+                    "updated_at": db_quiz.updated_at.isoformat(),
+                }
+            }
 
-Format as JSON:
-{{
-    "questions": [
-        {{
-            "question": "What is the main topic covered?",
-            "options": ["Answer A", "Answer B", "Answer C", "Answer D"],
-            "correct_answer": 0,
-            "explanation": "Answer A is correct because...",
-            "hint": "Think about the session's main focus"
-        }}
-    ]
-}}
+        # If attendee and no quiz exists
+        if not is_admin:
+            return {
+                "status": "success",
+                "is_admin": False,
+                "data": None,
+                "message": "No quiz has been published for this session yet."
+            }
 
-Respond ONLY with valid JSON."""
-            }],
-            temperature=0.5,
-            max_tokens=1000
-        )
-        if quiz_text:
-            try:
-                quiz_data = json.loads(quiz_text)
-                questions = quiz_data.get("questions", [])
-            except Exception as groq_err:
-                logger.warning(f"Groq quiz JSON fallback used: {groq_err}")
-
-        questions = questions[:5]
-        while len(questions) < 5:
-            questions.append({
-                "question": f"Which best describes '{session.title}'?",
-                "options": [
-                    (getattr(session, "description", "") or session.title)[:40],
-                    "Other topic",
-                    "Different area",
-                    "Unrelated"
-                ],
-                "correct_answer": 0,
-                "explanation": "Based on session description",
-                "hint": "Refer to session details"
-            })
-
+        # If admin, return blank placeholder with is_admin: True so builder renders
         return {
             "status": "success",
+            "is_admin": True,
             "data": {
                 "session_id": session_id,
                 "title": f"Quiz: {session.title}",
-                "total_questions": len(questions),
-                "questions": questions,
-                "generated_at": datetime.utcnow().isoformat(),
-                "generated_by": _DISCOVERED_MODELS[0] if _DISCOVERED_MODELS else "eventai-engine"
+                "total_questions": 0,
+                "questions": []
             }
         }
 
@@ -748,23 +749,22 @@ async def submit_quiz(
         answers = request_body.get("answers", {})
         user_id = _u_get(current_user, "id")
 
-        session = db.query(SessionModel).filter(SessionModel.id == session_id).first()
-        if not session:
-            raise HTTPException(status_code=404, detail="Session not found")
+        db_quiz = db.query(SessionQuiz).filter(SessionQuiz.session_id == session_id).first()
+        if not db_quiz or not db_quiz.questions:
+            raise HTTPException(status_code=404, detail="No active quiz found to score")
 
-        if not answers:
-            raise HTTPException(status_code=400, detail="No answers provided")
+        questions = db_quiz.questions
+        total_questions = len(questions)
+        correct_count = 0
 
-        try:
-            answer_dict = {int(k): int(v) for k, v in answers.items()}
-        except (ValueError, TypeError):
-            raise HTTPException(status_code=400, detail="Invalid answer format")
+        # Validate against actual questions in DB
+        for idx, q in enumerate(questions):
+            user_picked = answers.get(str(idx), answers.get(idx))
+            if user_picked is not None and int(user_picked) == int(q.get("correct_answer", 0)):
+                correct_count += 1
 
-        total_questions = 5
-        correct_count = sum(1 for k, v in answer_dict.items() if k == v)
-
-        percentage = int((correct_count / total_questions) * 100)
-        points_earned = int((correct_count / total_questions) * 100)
+        percentage = int((correct_count / total_questions) * 100) if total_questions else 0
+        points_earned = correct_count * 20
 
         db_user = db.query(UserModel).filter(UserModel.id == user_id).first()
         total_pts = points_earned
@@ -773,32 +773,14 @@ async def submit_quiz(
             total_pts = db_user.total_points
             db.commit()
 
-        if percentage == 100:
-            message = "Perfect score! Outstanding mastery! 🎉"
-            performance = "expert"
-        elif percentage >= 80:
-            message = "Excellent work! You've mastered the key concepts! 👏"
-            performance = "advanced"
-        elif percentage >= 60:
-            message = "Good effort! You understand the main ideas. Keep practicing! 📚"
-            performance = "intermediate"
-        else:
-            message = "Great attempt! Review the material and try again. 💪"
-            performance = "beginner"
-
         return {
             "status": "success",
-            "data": {
-                "session_id": session_id,
-                "percentage": percentage,
-                "correct": correct_count,
-                "incorrect": total_questions - correct_count,
-                "points_earned": points_earned,
-                "total_points": total_pts,
-                "message": message,
-                "performance_level": performance,
-                "submitted_at": datetime.utcnow().isoformat()
-            }
+            "percentage": percentage,
+            "correct": correct_count,
+            "incorrect": total_questions - correct_count,
+            "points": points_earned,
+            "total_points": total_pts,
+            "message": f"You scored {correct_count} out of {total_questions} ({percentage}%)",
         }
 
     except HTTPException:
@@ -806,6 +788,135 @@ async def submit_quiz(
     except Exception as e:
         logger.error(f"Quiz submission error: {str(e)}")
         raise HTTPException(status_code=500, detail="Failed to submit quiz")
+
+@router.post("/sessions/{session_id}/quiz/generate")
+async def generate_session_quiz(
+    session_id: int,
+    db: Session = Depends(get_db),
+    current_user: Any = Depends(get_current_user)
+):
+    """Admin-only: Generates 5 multiple choice questions via Groq and persists to DB."""
+    if not (getattr(current_user, "is_admin", False) or getattr(current_user, "role", "") == "admin"):
+        raise HTTPException(status_code=403, detail="Only organizers can generate quizzes")
+
+    session = db.query(SessionModel).filter(SessionModel.id == session_id).first()
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    prompt = f"""Generate a 5-question multiple-choice quiz based on this conference session:
+Title: {session.title}
+Description: {session.description or 'Practical tech session covering core architectural concepts and live demo.'}
+
+Return ONLY valid JSON matching this schema:
+{{
+  "questions": [
+    {{
+      "question": "Clear technical question here?",
+      "options": ["Option A", "Option B", "Option C", "Option D"],
+      "correct_answer": 0,
+      "explanation": "Brief explanation of why this answer is correct",
+      "hint": "Short helpful clue"
+    }}
+  ]
+}}"""
+
+    ai_text = _call_groq_with_fallback(
+        messages=[{"role": "user", "content": prompt}],
+        temperature=0.4,
+        max_tokens=1200
+    )
+
+    questions = []
+    if ai_text:
+        try:
+            # Strip any accidental markdown formatting
+            clean_json = ai_text.strip()
+            if clean_json.startswith("```json"):
+                clean_json = clean_json[7:]
+            if clean_json.startswith("```"):
+                clean_json = clean_json[3:]
+            if clean_json.endswith("```"):
+                clean_json = clean_json[:-3]
+            parsed = json.loads(clean_json.strip())
+            questions = parsed.get("questions", [])
+        except Exception as e:
+            logger.error(f"Failed to parse Groq quiz: {e}")
+
+    # Fallback template if LLM output fails
+    if not questions:
+        questions = [
+            {
+                "question": f"What is the core takeaway of '{session.title}'?",
+                "options": [
+                    (session.description or "Best practices and fundamentals")[:50],
+                    "Legacy database migrations",
+                    "Unrelated legacy frameworks",
+                    "Hardware networking cables"
+                ],
+                "correct_answer": 0,
+                "explanation": "Derived directly from the session curriculum.",
+                "hint": "Check the session description."
+            }
+        ]
+
+    # Save directly to database
+    db_quiz = db.query(SessionQuiz).filter(SessionQuiz.session_id == session_id).first()
+    if not db_quiz:
+        db_quiz = SessionQuiz(
+            session_id=session_id,
+            title=f"Quiz: {session.title}",
+            questions=questions,
+            created_by=_u_get(current_user, "id"),
+            updated_at=datetime.utcnow()
+        )
+        db.add(db_quiz)
+    else:
+        db_quiz.questions = questions
+        db_quiz.updated_at = datetime.utcnow()
+
+    db.commit()
+    db.refresh(db_quiz)
+
+    return {
+        "status": "success",
+        "message": "Quiz generated successfully",
+        "data": {
+            "session_id": session_id,
+            "title": db_quiz.title,
+            "total_questions": len(questions),
+            "questions": questions
+        }
+    } 
+
+@router.post("/sessions/{session_id}/quiz/save")
+async def save_session_quiz(
+    session_id: int,
+    payload: QuizSaveRequest,
+    db: Session = Depends(get_db),
+    current_user: Any = Depends(get_current_user)
+):
+    """Admin-only: Manually update or create quiz questions."""
+    if not (getattr(current_user, "is_admin", False) or getattr(current_user, "role", "") == "admin"):
+        raise HTTPException(status_code=403, detail="Only organizers can edit quizzes")
+
+    db_quiz = db.query(SessionQuiz).filter(SessionQuiz.session_id == session_id).first()
+    if not db_quiz:
+        db_quiz = SessionQuiz(
+            session_id=session_id,
+            title=payload.title or f"Quiz for Session #{session_id}",
+            questions=payload.questions,
+            created_by=_u_get(current_user, "id"),
+            updated_at=datetime.utcnow()
+        )
+        db.add(db_quiz)
+    else:
+        if payload.title:
+            db_quiz.title = payload.title
+        db_quiz.questions = payload.questions
+        db_quiz.updated_at = datetime.utcnow()
+
+    db.commit()
+    return {"status": "success", "message": "Quiz saved successfully"}   
 
 
 # ============================================================================
