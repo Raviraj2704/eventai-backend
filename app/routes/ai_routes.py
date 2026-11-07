@@ -19,6 +19,7 @@ from app.models import (
     User as UserModel, Challenge, Resource, Speaker, SessionQuiz
 )
 from app.schemas import UserResponse
+from pydantic import BaseModel
 from app.routes.auth import get_current_user
 
 logger = logging.getLogger(__name__)
@@ -240,7 +241,7 @@ async def get_ai_recommendations(
         ).all()
         attended_session_ids = [a.session_id for a in user_attended]
 
-        # Find unattended sessions
+        # Find unattended sessions    
         query = db.query(SessionEvent)
         if attended_session_ids:
             query = query.filter(~SessionEvent.id.in_(attended_session_ids))
