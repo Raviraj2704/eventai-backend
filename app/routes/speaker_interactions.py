@@ -490,3 +490,49 @@ def send_message_to_speaker(
         "message": "Message sent",
         "data": _message_payload(message),
     }
+
+@chat_router.delete("/messages/{message_id}")
+def delete_single_message(
+    message_id: int,
+    db: DBSession = Depends(get_db),
+    current_user: Any = Depends(get_current_user),
+):
+    me = _current_user_id(current_user)
+    msg = db.query(DirectMessage).filter(DirectMessage.id == message_id).first()
+    if not msg:
+        raise HTTPException(status_code=404, detail="Message not found")
+    if msg.sender_id != me and msg.recipient_id != me:
+        raise HTTPException(status_code=403, detail="Not authorized to delete this message")
+
+    try:
+        db.delete(msg)
+        db.commit()
+    except SQLAlchemyError as exc:
+        db.rollback()
+        logger.error("Failed to delete message %s: %s", message_id, exc)
+        raise HTTPException(status_code=500, detail="Could not delete message")
+
+    return {"status": "success", "message": "Message deleted"}
+
+
+@chat_router.delete("/users/{partner_user_id}/messages")
+def clear_user_conversation(
+    partner_user_id: int,
+    db: DBSession = Depends(get_db),
+    current_user: Any = Depends(get_current_user),
+):
+    me = _current_user_id(current_user)
+    try:
+        db.query(DirectMessage).filter(
+            or_(
+                and_(DirectMessage.sender_id == me, DirectMessage.recipient_id == partner_user_id),
+                and_(DirectMessage.sender_id == partner_user_id, DirectMessage.recipient_id == me),
+            )
+        ).delete(synchronize_session=False)
+        db.commit()
+    except SQLAlchemyError as exc:
+        db.rollback()
+        logger.error("Failed to clear conversation with %s: %s", partner_user_id, exc)
+        raise HTTPException(status_code=500, detail="Could not delete conversation")
+
+    return {"status": "success", "message": "Conversation deleted"}
