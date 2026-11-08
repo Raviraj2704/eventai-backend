@@ -14,7 +14,7 @@ from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
-from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Integer, Text
+from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Integer, Text, text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session as DBSession
 
@@ -217,3 +217,13 @@ def submit_session_feedback(
         "message": "Your feedback submitted successfully",
         "data": _feedback_payload(feedback),
     }
+
+@router.get("/briefcase")
+def get_briefcase_items(db: DBSession = Depends(get_db)):
+    try:
+        # Assuming you want to see all items for testing, or filter by user_id if you have auth
+        result = db.execute(text("SELECT id, title, file_type, file_url FROM user_briefcase ORDER BY id DESC")).fetchall()
+        items = [{"id": r[0], "title": r[1], "file_type": r[2], "file_url": r[3]} for r in result]
+        return {"status": "success", "data": items}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
