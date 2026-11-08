@@ -14,7 +14,8 @@ from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
-from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Integer, Text, text, logging
+from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Integer, Text, text
+import logging
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session as DBSession
 
