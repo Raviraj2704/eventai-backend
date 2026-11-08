@@ -18,6 +18,7 @@
 #   POST /speakers/{speaker_id}/messages     send a message to a speaker's account
 # ============================================================================
 
+from fastapi import HTTPException
 import logging
 from datetime import datetime
 from typing import Any
@@ -34,6 +35,7 @@ from sqlalchemy.orm import Session as DBSession
 from app.database import get_db
 from app.models import Base, NotificationPreference, Speaker, User
 from app.routes.auth import get_current_user
+from app.routes.blocks import is_blocked_between
 
 logger = logging.getLogger(__name__)
 
@@ -435,7 +437,11 @@ def list_user_conversation(
     current_user: Any = Depends(get_current_user),
 ):
     me = _current_user_id(current_user)
+    if is_blocked_between(db, me, partner_user_id):
+      return {"status": "success", "data": []}
     _ensure_user_exists(db, partner_user_id)
+    if is_blocked_between(db, me, partner_user_id):
+      raise HTTPException(status_code=403, detail="You cannot message this person")
 
     rows = _conversation_query(db, me, partner_user_id).offset(offset).limit(limit).all()
     return {"status": "success", "data": [_message_payload(m) for m in rows]}
