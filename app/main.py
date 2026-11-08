@@ -12,6 +12,7 @@ from app.routes import event_info
 import app.models_event_info  # Ensures tables are auto-created
 from app.routes import session_hub
 from app.routes import session_admin
+from app.routes import feedback_forms
 from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -161,6 +162,7 @@ app.include_router(learning_paths.router, prefix="/api/v1/learning_paths", tags=
 app.include_router(engagement.router, prefix="/api/v1/engagement", tags=["Engagement"])
 app.include_router(partners.router, prefix="/api/v1/partners", tags=["Partners"])
 app.include_router(session_admin.router, prefix="/api/v1/session-admin", tags=["Session Admin"])
+app.include_router(feedback_forms.router, prefix="/api/v1/feedback-forms", tags=["Feedback Forms"])
 app.include_router(analytics.router, prefix="/api/v1/analytics", tags=["Analytics"])
 app.include_router(ai_routes.router, prefix="/api/v1/ai", tags=["AI Features"])
 app.include_router(session_admin.router, prefix="/api/v1/session-admin", tags=["Session Admin"])
