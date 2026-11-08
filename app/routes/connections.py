@@ -26,6 +26,7 @@ from sqlalchemy.orm import Session as DBSession
 from app.database import get_db
 from app.models import Base, User
 from app.routes.auth import get_current_user
+from app.routes.blocks import is_blocked_between
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -92,8 +93,7 @@ def _get_user_or_404(db: DBSession, user_id: int) -> User:
 
 
 def _is_blocked_between(db: DBSession, a: int, b: int) -> bool:
-    # Blocking is added in the next step. This keeps the check in one place.
-    return False
+    return is_blocked_between(db, a, b)
 
 
 def _commit(db: DBSession, action: str, detail: str) -> None:
