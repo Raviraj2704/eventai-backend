@@ -5,6 +5,7 @@
 # Purpose: User profile management endpoints
 # Status: Production-Ready ✅
 
+from app.routes.blocks import blocked_user_ids
 from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Query, Body
 from typing import Optional, Dict, Any
 from sqlalchemy.orm import Session
@@ -141,11 +142,16 @@ def get_current_user(
 async def get_users(
     limit: int = 50,
     skip: int = 0,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
-    """Get list of active users"""
+    """Get list of active users, hiding anyone blocked in either direction"""
     try:
-        users = db.query(User).filter(User.is_active == True).offset(skip).limit(limit).all()
+        hidden = blocked_user_ids(db, current_user.id)
+        query = db.query(User).filter(User.is_active == True)
+        if hidden:
+            query = query.filter(User.id.notin_(hidden))
+        users = query.offset(skip).limit(limit).all()
         return [_serialize_user_profile(u) for u in users]
     except Exception as e:
         logger.error(f"Get users error: {e}")
@@ -402,21 +408,23 @@ async def delete_account(
 @router.get("/search")
 def search_users(
     q: str = Query(..., min_length=1, description="Search by name or email"),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
-    """Search users by full name or email"""
+    """Search users by full name or email, hiding blocked people"""
     search_term = f"%{q}%"
-    
-    users = db.query(User).filter(
+    hidden = blocked_user_ids(db, current_user.id)
+
+    query = db.query(User).filter(
         (User.first_name.ilike(search_term)) |
         (User.last_name.ilike(search_term)) |
         (User.email.ilike(search_term))
-    ).all()
-    
-    if not users:
-        return []
-    
-    return users
+    )
+    if hidden:
+        query = query.filter(User.id.notin_(hidden))
+
+    users = query.all()
+    return users if users else []
 
 
 @router.get("/designations")
@@ -482,16 +490,19 @@ async def get_user_by_id(
 @router.get("")
 def get_all_users(
     designation: Optional[str] = Query(None, description="Filter by job title"),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
-    """Get all users with optional job title filter"""
+    """Get all users with optional job title filter, hiding blocked people"""
+    hidden = blocked_user_ids(db, current_user.id)
     query = db.query(User)
-    
+
+    if hidden:
+        query = query.filter(User.id.notin_(hidden))
     if designation:
         query = query.filter(User.job_title.ilike(f"%{designation}%"))
-    
-    users = query.all()
-    return users
+
+    return query.all()
 
 
 # NEW ROUTE: Handle connection requests from the Networking page

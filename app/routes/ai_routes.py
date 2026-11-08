@@ -2,6 +2,7 @@
 # Phase 3 - Real AI Integration Routes (Production Ready)
 # ============================================================================
 
+from app.routes.blocks import blocked_user_ids
 from fastapi import APIRouter, Depends, HTTPException, Query, BackgroundTasks
 from sqlalchemy.orm import Session
 from sqlalchemy import String, func, and_
@@ -600,6 +601,8 @@ async def get_network_matches(
             UserModel.id != current_user_id,
             UserModel.is_active == True
         ).all()
+        hidden_ids = blocked_user_ids(db, current_user_id)
+        all_other_users = [u for u in all_other_users if u.id not in hidden_ids]
 
         potential_matches = []
         for u in all_other_users:
