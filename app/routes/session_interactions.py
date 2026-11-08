@@ -219,17 +219,20 @@ def submit_session_feedback(
         "data": _feedback_payload(feedback),
     }
 
-@router.get("/briefcase")
-def get_user_briefcase(db: DBSession = Depends(get_db), current_user: Any = Depends(get_current_user)):
+@router.get("/user/briefcase")
+def get_user_briefcase(
+    db: DBSession = Depends(get_db),
+    current_user: Any = Depends(get_current_user),
+):
+    user_id = _get_user_id(current_user)
     try:
-        # Fetch the items we just inserted into the database
         result = db.execute(
             text("SELECT id, title, file_url, file_type FROM user_briefcase WHERE user_id = :uid ORDER BY id ASC"),
-            {"uid": current_user.id}
+            {"uid": user_id}
         ).fetchall()
         
         items = [{"id": row[0], "title": row[1], "file_url": row[2], "file_type": row[3]} for row in result]
         return {"status": "success", "data": items}
     except Exception as e:
         logger.error(f"Failed to fetch briefcase: {e}")
-        return {"status": "error", "message": "Could not load briefcase items"}    
+        return {"status": "error", "message": str(e)}
