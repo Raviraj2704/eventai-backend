@@ -103,7 +103,7 @@ async def get_badges(
 # ============================================================================
 
 @router.get(
-    "/{badge_id}",
+    "/{badge_id:int}",
     response_model=BadgeDetailResponse,
     responses={404: {"model": ErrorResponse}}
 )
