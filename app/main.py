@@ -172,7 +172,7 @@ app.include_router(connections.router, prefix="/api/v1/connections", tags=["Conn
 app.include_router(blocks.router, prefix="/api/v1/blocks", tags=["Blocks"])
 app.include_router(meetings.router, prefix="/api/v1/meetings", tags=["Meetings"])
 app.include_router(favourites.router, prefix="/api/v1/favourites", tags=["Favourites"])
-app.include_router(social_reactions.router, prefix="/api/v1/social-reactions", tags=["Social Reactions"])
+app.include_router(social_reactions.router, prefix="/api/v1/social", tags=["Social Reactions"])
 app.include_router(analytics.router, prefix="/api/v1/analytics", tags=["Analytics"])
 app.include_router(ai_routes.router, prefix="/api/v1/ai", tags=["AI Features"])
 app.include_router(session_admin.router, prefix="/api/v1/session-admin", tags=["Session Admin"])
