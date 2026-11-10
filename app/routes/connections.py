@@ -3,6 +3,7 @@
 # File: app/routes/connections.py
 # Mounted at /api/v1/connections
 #
+# POST   /scan/{user_id}            save a badge-scanned person (accepted at once)
 # GET    /contacts                  accepted connections (My Contacts)
 # GET    /requests?direction=in|out pending requests
 # POST   /requests/{user_id}        send a request, with an optional message
@@ -85,6 +86,14 @@ def _person(user: User) -> dict:
     }
 
 
+def _contact_person(user: User) -> dict:
+    """Saved contacts include email and phone, so they can be shown and exported."""
+    data = _person(user)
+    data["email"] = user.email
+    data["phone"] = user.phone
+    return data
+
+
 def _get_user_or_404(db: DBSession, user_id: int) -> User:
     user = db.query(User).filter(User.id == user_id, User.is_active.is_(True)).first()
     if user is None:
@@ -110,6 +119,63 @@ def _pair_filter(a: int, b: int):
         and_(ConnectionRequest.sender_id == a, ConnectionRequest.receiver_id == b),
         and_(ConnectionRequest.sender_id == b, ConnectionRequest.receiver_id == a),
     )
+
+
+# ============================================================================
+# Save on badge scan (mutual, so the contact is accepted at once)
+# ============================================================================
+
+@router.post("/scan/{user_id}", status_code=status.HTTP_200_OK)
+def save_scanned_contact(
+    user_id: int,
+    db: DBSession = Depends(get_db),
+    current_user: Any = Depends(get_current_user),
+):
+    me = _me(current_user)
+    if user_id == me:
+        raise HTTPException(status_code=400, detail="You cannot save yourself")
+    _get_user_or_404(db, user_id)
+
+    if _is_blocked_between(db, me, user_id):
+        raise HTTPException(status_code=403, detail="You cannot connect with this person")
+
+    row = db.query(ConnectionRequest).filter(_pair_filter(me, user_id)).first()
+
+    if row is not None:
+        if row.status != ACCEPTED:
+            row.status = ACCEPTED
+            row.responded_at = datetime.utcnow()
+            _commit(db, "Scan accept", "Could not save this contact")
+        return {
+            "status": "success",
+            "message": "Contact saved",
+            "data": {"request_id": row.id, "state": "connected"},
+        }
+
+    row = ConnectionRequest(
+        sender_id=me,
+        receiver_id=user_id,
+        status=ACCEPTED,
+        responded_at=datetime.utcnow(),
+    )
+    db.add(row)
+    try:
+        db.commit()
+    except IntegrityError:
+        # Another request for this pair was created at the same moment: treat as saved.
+        db.rollback()
+    except SQLAlchemyError as exc:
+        db.rollback()
+        logger.error("Scan save failed: %s", exc)
+        raise HTTPException(status_code=500, detail="Could not save this contact")
+    else:
+        db.refresh(row)
+
+    return {
+        "status": "success",
+        "message": "Contact saved",
+        "data": {"request_id": row.id if row.id else None, "state": "connected"},
+    }
 
 
 # ============================================================================
@@ -140,7 +206,7 @@ def my_contacts(
         user = users.get(other_id)
         if user is None:
             continue
-        data.append(_person(user))
+        data.append(_contact_person(user))
 
     return {"status": "success", "total": total, "page": page, "limit": limit, "data": data}
 
