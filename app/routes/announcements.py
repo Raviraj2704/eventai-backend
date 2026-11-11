@@ -1,36 +1,33 @@
 # ============================================================================
 # Announcement Routes
-# ============================================================================
 # File: app/routes/announcements.py
-# Purpose: Announcement management and distribution
-# Status: Production-Ready ✅
+# GET    /api/v1/announcements            published announcements (everyone)
+# GET    /api/v1/announcements/{id}       one announcement (everyone)
+# POST   /api/v1/announcements            create (admin only)
+# PUT    /api/v1/announcements/{id}       edit (admin only)
+# DELETE /api/v1/announcements/{id}       delete (admin only)
+# ============================================================================
 
-from fastapi import APIRouter, Depends, HTTPException, status, Query
-from sqlalchemy.orm import Session
-from sqlalchemy import and_, or_, cast, String
+import logging
 from datetime import datetime
 from typing import Optional
+
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
 from pydantic import BaseModel
-import logging
+from sqlalchemy import or_
+from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.models import (
-    Announcement, User,
-    AnnouncementType, AnnouncementCategory, Priority
-)
-from app.schemas import (
-    AnnouncementResponse, AnnouncementDetailResponse,
-    AnnouncementListRequest, ErrorResponse
-)
+from app.models import Announcement, User
 from app.routes.users import get_current_user
 from app.utils.email import send_announcement_email
-
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["Announcements"])
 
+
 # ============================================================================
-# SCHEMAS & ENUM NORMALIZER
+# Schemas
 # ============================================================================
 
 class AnnouncementCreateSchema(BaseModel):
@@ -42,6 +39,8 @@ class AnnouncementCreateSchema(BaseModel):
     image_url: Optional[str] = None
     action_url: Optional[str] = None
     expires_at: Optional[datetime] = None
+    is_published: bool = True
+
 
 class AnnouncementUpdateSchema(BaseModel):
     title: Optional[str] = None
@@ -52,381 +51,196 @@ class AnnouncementUpdateSchema(BaseModel):
     image_url: Optional[str] = None
     action_url: Optional[str] = None
     expires_at: Optional[datetime] = None
+    is_published: Optional[bool] = None
 
 
-def _normalize_announcement_enums(
-    raw_type: Optional[str],
-    raw_category: Optional[str],
-    raw_priority: Optional[str]
-):
-    """
-    Map any frontend string to the exact SQLAlchemy Enum members:
-    - AnnouncementType: event, schedule, important, update, reminder
-    - AnnouncementCategory: general, technical, logistical, urgent
-    - Priority: low, medium, high, urgent
-    """
-    t = (raw_type or "").strip().lower()
-    type_map = {
-        "event": AnnouncementType.EVENT,
-        "schedule": AnnouncementType.SCHEDULE,
-        "important": AnnouncementType.IMPORTANT,
-        "update": AnnouncementType.UPDATE,
-        "reminder": AnnouncementType.REMINDER,
-        "urgent": AnnouncementType.IMPORTANT,
-        "general": AnnouncementType.EVENT,
+# ============================================================================
+# Helpers
+# ============================================================================
+
+TYPE_MAP = {
+    "event": "event", "schedule": "schedule", "important": "important",
+    "update": "update", "reminder": "reminder", "urgent": "important",
+    "general": "event",
+}
+CATEGORY_MAP = {
+    "general": "general", "technical": "technical", "logistical": "logistical",
+    "logistics": "logistical", "urgent": "urgent", "important": "urgent",
+}
+PRIORITY_MAP = {
+    "low": "low", "medium": "medium", "normal": "medium", "high": "high",
+    "urgent": "urgent", "critical": "urgent",
+}
+
+
+def require_admin(current_user: User = Depends(get_current_user)) -> User:
+    if not getattr(current_user, "is_admin", False):
+        raise HTTPException(status_code=403, detail="Only admins can manage announcements")
+    return current_user
+
+
+def _enum_value(v):
+    return getattr(v, "value", v)
+
+
+def _to_dict(a: Announcement) -> dict:
+    return {
+        "id": a.id,
+        "title": a.title,
+        "content": a.content,
+        "message": a.content,
+        "announcement_type": _enum_value(a.announcement_type),
+        "category": _enum_value(a.category),
+        "priority": _enum_value(a.priority),
+        "image_url": a.image_url,
+        "action_url": a.action_url,
+        "is_published": bool(a.is_published),
+        "view_count": a.view_count or 0,
+        "created_at": a.created_at.isoformat() if a.created_at else None,
+        "expires_at": a.expires_at.isoformat() if a.expires_at else None,
     }
-    resolved_type = type_map.get(t, AnnouncementType.EVENT)
-
-    c = (raw_category or "").strip().lower()
-    cat_map = {
-        "general": AnnouncementCategory.GENERAL,
-        "technical": AnnouncementCategory.TECHNICAL,
-        "logistical": AnnouncementCategory.LOGISTICAL,
-        "logistics": AnnouncementCategory.LOGISTICAL,
-        "urgent": AnnouncementCategory.URGENT,
-        "important": AnnouncementCategory.URGENT,
-    }
-    resolved_cat = cat_map.get(c, AnnouncementCategory.GENERAL)
-
-    p = (raw_priority or "").strip().lower()
-    pri_map = {
-        "low": Priority.LOW,
-        "medium": Priority.MEDIUM,
-        "normal": Priority.MEDIUM,
-        "high": Priority.HIGH,
-        "urgent": Priority.URGENT,
-        "critical": Priority.URGENT,
-    }
-    resolved_pri = pri_map.get(p, Priority.MEDIUM)
-
-    return resolved_type, resolved_cat, resolved_pri
 
 
-# ============================================================================
-# GET ALL ANNOUNCEMENTS
-# ============================================================================
-
-@router.get(
-    "",
-    response_model=dict,
-    responses={400: {"model": ErrorResponse}}
-)
-async def get_announcements(
-    page: int = Query(1, ge=1),
-    limit: int = Query(10, ge=1, le=50),
-    announcement_type: Optional[str] = None,
-    category: Optional[str] = None,
-    priority: Optional[str] = None,
-    db: Session = Depends(get_db)
-):
-    """
-    Get all announcements with filtering and pagination
-    """
-    try:
-        query = db.query(Announcement).filter(Announcement.is_published == True)
-        
-        # Build filters safely using cast to String so invalid enum filter values never 500
-        if announcement_type:
-            query = query.filter(
-                cast(Announcement.announcement_type, String).ilike(f"%{announcement_type.strip()}%")
-            )
-
-        if category:
-            query = query.filter(
-                cast(Announcement.category, String).ilike(f"%{category.strip()}%")
-            )
-        
-        if priority:
-            query = query.filter(
-                cast(Announcement.priority, String).ilike(f"%{priority.strip()}%")
-            )
-        
-        # Filter expired announcements
-        query = query.filter(
-            or_(
-                Announcement.expires_at == None,
-                Announcement.expires_at > datetime.utcnow()
-            )
-        )
-        
-        # Sort by date
-        query = query.order_by(Announcement.created_at.desc())
-        
-        # Get total count
-        total = query.count()
-        
-        # Pagination
-        announcements = query.offset((page - 1) * limit).limit(limit).all()
-        
-        # Format response
-        announcements_data = [
-            AnnouncementResponse.model_validate(announcement)
-            for announcement in announcements
-        ]
-        
-        return {
-            "total": total,
-            "page": page,
-            "limit": limit,
-            "total_pages": (total + limit - 1) // limit,
-            "has_next": page * limit < total,
-            "has_prev": page > 1,
-            "data": announcements_data
-        }
-    
-    except Exception as e:
-        logger.error(f"Get announcements error: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to fetch announcements"
-        )
-
-
-# ============================================================================
-# GET ANNOUNCEMENT BY ID
-# ============================================================================
-
-@router.get(
-    "/{announcement_id}",
-    response_model=AnnouncementDetailResponse,
-    responses={404: {"model": ErrorResponse}}
-)
-async def get_announcement_by_id(
-    announcement_id: int,
-    db: Session = Depends(get_db)
-):
-    """
-    Get announcement by ID
-    """
-    try:
-        announcement = db.query(Announcement).filter(
-            Announcement.id == announcement_id
-        ).first()
-        
-        if not announcement:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Announcement not found"
-            )
-        
-        # Increment view count
-        announcement.view_count = (announcement.view_count or 0) + 1
-        db.commit()
-        
-        return AnnouncementDetailResponse.model_validate(announcement)
-    
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Get announcement error: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to fetch announcement"
-        )
-
-
-# ============================================================================
-# CREATE ANNOUNCEMENT
-# ============================================================================
-
-@router.post("", response_model=dict, status_code=status.HTTP_201_CREATED)
-@router.post("/", response_model=dict, status_code=status.HTTP_201_CREATED, include_in_schema=False)
-async def create_announcement(
-    request: AnnouncementCreateSchema,
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
-):
-    """
-    Create new announcement with strict Enum normalization
-    """
-    try:
-        resolved_type, resolved_category, resolved_priority = _normalize_announcement_enums(
-            request.announcement_type or request.category,
-            request.category,
-            request.priority
-        )
-
-        # Create announcement with valid SQLAlchemy Enums
-        announcement = Announcement(
-            title=request.title,
-            content=request.content,
-            announcement_type=resolved_type,
-            category=resolved_category,
-            priority=resolved_priority,
-            image_url=request.image_url,
-            created_by_user_id=current_user.id,
-            expires_at=request.expires_at,
-            is_published=True,
-            created_at=datetime.utcnow()
-        )
-        
-        db.add(announcement)
-        db.commit()
-        db.refresh(announcement)
-        
-        # Send email to all users (best-effort)
+def _send_emails(recipients: list) -> None:
+    """Runs after the response is sent, so posting never waits on email."""
+    for email, title, body in recipients:
         try:
-            all_users = db.query(User).filter(User.is_active == True).limit(10).all()
-            for user in all_users:
-                try:
-                    send_announcement_email(
-                        user.email,
-                        request.title,
-                        request.content
-                    )
-                except Exception as e:
-                    logger.warning(f"Failed to send email to {user.email}: {e}")
+            send_announcement_email(email, title, body)
         except Exception as e:
-            logger.warning(f"Email broadcast skipped: {e}")
-        
-        logger.info(f"Announcement created: {announcement.id} by user {current_user.id}")
-        
-        try:
-            validated = AnnouncementResponse.model_validate(announcement).model_dump()
-        except Exception:
-            validated = {
-                "id": announcement.id,
-                "title": announcement.title,
-                "content": announcement.content,
-                "announcement_type": resolved_type.value,
-                "category": resolved_category.value,
-                "priority": resolved_priority.value,
-                "is_published": True,
-                "view_count": 0,
-                "created_at": announcement.created_at.isoformat() if announcement.created_at else datetime.utcnow().isoformat()
-            }
-
-        return {
-            "status": "success",
-            "data": validated,
-            **validated
-        }
-    
-    except HTTPException:
-        raise
-    except Exception as e:
-        db.rollback()
-        logger.error(f"Announcement creation error: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to create announcement: {str(e)}"
-        )
+            logger.warning(f"Failed to send announcement email to {email}: {e}")
 
 
 # ============================================================================
-# UPDATE ANNOUNCEMENT
+# List and detail (everyone)
 # ============================================================================
 
-@router.put(
-    "/{announcement_id}",
-    response_model=AnnouncementResponse,
-    responses={
-        401: {"model": ErrorResponse}, 
-        403: {"model": ErrorResponse}, 
-        404: {"model": ErrorResponse}
-    }
-)
-async def update_announcement(
-    announcement_id: int,
-    request: AnnouncementUpdateSchema,
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
+@router.get("")
+def list_announcements(
+    page: int = Query(1, ge=1),
+    limit: int = Query(50, ge=1, le=100),
+    db: Session = Depends(get_db),
 ):
-    """
-    Update announcement
-    """
-    try:
-        announcement = db.query(Announcement).filter(
-            Announcement.id == announcement_id
-        ).first()
-        
-        if not announcement:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Announcement not found"
-            )
-        
-        resolved_type, resolved_cat, resolved_pri = _normalize_announcement_enums(
-            request.announcement_type,
-            request.category,
-            request.priority
-        )
-
-        if request.title is not None:
-            announcement.title = request.title
-        if request.content is not None:
-            announcement.content = request.content
-        if request.announcement_type is not None:
-            announcement.announcement_type = resolved_type
-        if request.category is not None:
-            announcement.category = resolved_cat
-        if request.priority is not None:
-            announcement.priority = resolved_pri
-        if request.image_url is not None:
-            announcement.image_url = request.image_url
-        if request.expires_at is not None:
-            announcement.expires_at = request.expires_at
-        
-        db.commit()
-        db.refresh(announcement)
-        
-        logger.info(f"Announcement updated: {announcement_id} by user {current_user.id}")
-        
-        return AnnouncementResponse.model_validate(announcement)
-    
-    except HTTPException:
-        raise
-    except Exception as e:
-        db.rollback()
-        logger.error(f"Announcement update error: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to update announcement"
-        )
-
-
-# ============================================================================
-# DELETE ANNOUNCEMENT
-# ============================================================================
-
-@router.delete(
-    "/{announcement_id}",
-    response_model=dict,
-    responses={
-        401: {"model": ErrorResponse}, 
-        403: {"model": ErrorResponse}, 
-        404: {"model": ErrorResponse}
+    query = db.query(Announcement).filter(
+        Announcement.is_published == True,
+        or_(Announcement.expires_at == None, Announcement.expires_at > datetime.utcnow()),
+    )
+    total = query.count()
+    rows = (
+        query.order_by(Announcement.created_at.desc())
+        .offset((page - 1) * limit)
+        .limit(limit)
+        .all()
+    )
+    return {
+        "status": "success",
+        "total": total,
+        "page": page,
+        "limit": limit,
+        "total_pages": (total + limit - 1) // limit,
+        "has_next": page * limit < total,
+        "has_prev": page > 1,
+        "data": [_to_dict(a) for a in rows],
     }
-)
-async def delete_announcement(
-    announcement_id: int,
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
-):
-    """
-    Delete announcement
-    """
-    try:
-        if announcement_id > 2147483647:
-            return {"message": "Announcement deleted successfully", "id": announcement_id}
 
-        announcement = db.query(Announcement).filter(
-            Announcement.id == announcement_id
-        ).first()
-        
-        if not announcement:
-            return {"message": "Announcement deleted successfully", "id": announcement_id}
-        
-        db.delete(announcement)
-        db.commit()
-        
-        logger.info(f"Announcement deleted: {announcement_id} by user {current_user.id}")
-        
-        return {"message": "Announcement deleted successfully", "id": announcement_id}
-    
-    except HTTPException:
-        raise
-    except Exception as e:
-        db.rollback()
-        logger.error(f"Announcement deletion error: {e}")
-        return {"message": "Announcement deleted successfully", "id": announcement_id}
+
+@router.get("/{announcement_id}")
+def get_announcement(announcement_id: int, db: Session = Depends(get_db)):
+    a = db.query(Announcement).filter(Announcement.id == announcement_id).first()
+    if not a or not a.is_published:
+        raise HTTPException(status_code=404, detail="Announcement not found")
+    a.view_count = (a.view_count or 0) + 1
+    db.commit()
+    return {"status": "success", "data": _to_dict(a)}
+
+
+# ============================================================================
+# Create, edit, delete (admin only)
+# ============================================================================
+
+@router.post("", status_code=status.HTTP_201_CREATED)
+def create_announcement(
+    payload: AnnouncementCreateSchema,
+    background_tasks: BackgroundTasks,
+    admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    title = payload.title.strip()
+    content = payload.content.strip()
+    if not title or not content:
+        raise HTTPException(status_code=400, detail="Title and message are required")
+
+    a = Announcement(
+        title=title,
+        content=content,
+        announcement_type=TYPE_MAP.get((payload.announcement_type or "").lower(), "event"),
+        category=CATEGORY_MAP.get((payload.category or "").lower(), "general"),
+        priority=PRIORITY_MAP.get((payload.priority or "").lower(), "medium"),
+        image_url=payload.image_url,
+        action_url=(payload.action_url or "").strip() or None,
+        expires_at=payload.expires_at,
+        is_published=payload.is_published,
+        created_by_user_id=admin.id,
+        created_at=datetime.utcnow(),
+    )
+    db.add(a)
+    db.commit()
+    db.refresh(a)
+
+    if a.is_published:
+        users = db.query(User).filter(User.is_active == True).all()
+        recipients = [(u.email, a.title, a.content) for u in users if u.email]
+        background_tasks.add_task(_send_emails, recipients)
+
+    logger.info(f"Announcement {a.id} created by admin {admin.id}")
+    return {"status": "success", "data": _to_dict(a)}
+
+
+@router.put("/{announcement_id}")
+def update_announcement(
+    announcement_id: int,
+    payload: AnnouncementUpdateSchema,
+    admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    a = db.query(Announcement).filter(Announcement.id == announcement_id).first()
+    if not a:
+        raise HTTPException(status_code=404, detail="Announcement not found")
+
+    if payload.title is not None:
+        a.title = payload.title.strip()
+    if payload.content is not None:
+        a.content = payload.content.strip()
+    if payload.announcement_type is not None:
+        a.announcement_type = TYPE_MAP.get(payload.announcement_type.lower(), "event")
+    if payload.category is not None:
+        a.category = CATEGORY_MAP.get(payload.category.lower(), "general")
+    if payload.priority is not None:
+        a.priority = PRIORITY_MAP.get(payload.priority.lower(), "medium")
+    if payload.image_url is not None:
+        a.image_url = payload.image_url
+    if payload.action_url is not None:
+        a.action_url = payload.action_url.strip() or None
+    if payload.expires_at is not None:
+        a.expires_at = payload.expires_at
+    if payload.is_published is not None:
+        a.is_published = payload.is_published
+
+    db.commit()
+    db.refresh(a)
+    logger.info(f"Announcement {a.id} updated by admin {admin.id}")
+    return {"status": "success", "data": _to_dict(a)}
+
+
+@router.delete("/{announcement_id}")
+def delete_announcement(
+    announcement_id: int,
+    admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    a = db.query(Announcement).filter(Announcement.id == announcement_id).first()
+    if not a:
+        raise HTTPException(status_code=404, detail="Announcement not found")
+    db.delete(a)
+    db.commit()
+    logger.info(f"Announcement {announcement_id} deleted by admin {admin.id}")
+    return {"status": "success", "message": "Announcement deleted", "id": announcement_id}

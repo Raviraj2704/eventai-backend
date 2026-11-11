@@ -640,6 +640,7 @@ class Announcement(Base):
     
     # Media
     image_url = Column(String(255))
+    action_url = Column(String(500), nullable=True)
     
     # Status & Engagement
     is_published = Column(Boolean, default=False, index=True)
