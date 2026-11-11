@@ -279,6 +279,7 @@ def read_current_user(current_user: User = Depends(get_current_user)):
         "email": current_user.email,
         "name": getattr(current_user, "name", None),
         "role": getattr(current_user, "role", None),
+        "is_admin": bool(getattr(current_user, "is_admin", False)),
     }
 
 # ============================================================================
