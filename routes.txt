@@ -1,0 +1,16 @@
+﻿================================================================================
+≡ƒöÉ CORS CONFIGURATION
+================================================================================
+Allowed Origins: ['https://event-ai-frontend.vercel.app', 'https://EVENT-AI-FRONTEND.vercel.app', 'http://localhost:5173', 'http://localhost:3000', 'http://127.0.0.1:5173', 'https://frontend-livid-two-96gqet7oy4.vercel.app/']
+================================================================================
+GET /openapi.json
+GET /docs
+GET /docs/oauth2-redirect
+GET /redoc
+GET /
+GET /health
+GET /api/v1/health
+GET /api/events
+POST /api/events
+POST /api/v1/networking/matches/{match_id}/accept
+POST /api/v1/networking/accept-match/{match_id}
