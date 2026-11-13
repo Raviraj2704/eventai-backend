@@ -2,446 +2,169 @@
 # Authentication Routes
 # ============================================================================
 # File: backend/app/routes/auth.py
-# Purpose: User authentication endpoints
 # Status: Production-Ready ✅
 
 import logging
 import base64
 import json
+import secrets
+import smtplib
+import os
+from datetime import datetime, timedelta
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
+
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
+from sqlalchemy import text
 from pydantic import BaseModel
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+
 from app.database import get_db
 from app.models import User
-from app.schemas import RegisterSchema, LoginSchema, TokenResponse, UserResponse
-from app.utils.auth import hash_password, verify_password, create_access_token, create_refresh_token
-from datetime import datetime
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-from app.utils.auth import decode_token
+from app.schemas import RegisterSchema, LoginSchema, TokenResponse
+from app.utils.auth import hash_password, verify_password, create_access_token, create_refresh_token, decode_token
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["Auth"])
+security = HTTPBearer(auto_error=False)
 
-# ============================================================================
-# REGISTER ENDPOINT
-# ============================================================================
+# --- Standard Auth Routes ---
 
 @router.post("/register", response_model=TokenResponse)
 def register(request: RegisterSchema, db: Session = Depends(get_db)):
-    """Register new user"""
-    try:
-        logger.info(f"📝 Registration attempt: {request.email}")
-        
-        # ✅ Check if email already exists
-        existing_user = db.query(User).filter(User.email == request.email).first()
-        
-        if existing_user:
-            logger.warning(f"❌ Email already registered: {request.email}")
-            raise HTTPException(
-                status_code=400,
-                detail="Email already registered"
-            )
-        
-        # ✅ Safely extract and clean the password (prevents bcrypt 72-byte crash)
-        raw_pw = request.password.get_secret_value() if hasattr(request.password, 'get_secret_value') else str(request.password)
-        clean_password = raw_pw.strip()[:72]
-        
-        # ✅ Hash password
-        hashed_password = hash_password(clean_password)
-        
-        # ✅ Create new user
-        new_user = User(
-            username=request.email.split("@")[0],
-            first_name=request.first_name,
-            last_name=request.last_name,
-            email=request.email,
-            password_hash=hashed_password,
-            is_active=True,
-        )
-        
-        # ✅ Save to database
-        db.add(new_user)
-        db.commit()
-        db.refresh(new_user)
-        
-        logger.info(f"✅ User registered: {new_user.email} (ID: {new_user.id})")
-        
-        # ✅ Generate tokens
-        access_token = create_access_token(data={"sub": str(new_user.id)})
-        refresh_token = create_refresh_token(data={"sub": str(new_user.id)})
-        
-        return {
-            "access_token": access_token,
-            "refresh_token": refresh_token,
-            "token_type": "bearer"
-
-        }
-        
-    except HTTPException as e:
-        raise e
-    except Exception as e:
-        logger.error(f"❌ Registration error: {str(e)}")
-        db.rollback()
-        raise HTTPException(status_code=500, detail=f"Registration failed: {str(e)}")
-
-
-# ============================================================================
-# LOGIN ENDPOINT
-# ============================================================================
+    existing_user = db.query(User).filter(User.email == request.email).first()
+    if existing_user:
+        raise HTTPException(status_code=400, detail="Email already registered")
+    
+    raw_pw = request.password.get_secret_value() if hasattr(request.password, 'get_secret_value') else str(request.password)
+    new_user = User(
+        username=request.email.split("@")[0],
+        first_name=request.first_name,
+        last_name=request.last_name,
+        email=request.email,
+        password_hash=hash_password(raw_pw.strip()[:72]),
+        is_active=True,
+    )
+    db.add(new_user)
+    db.commit()
+    db.refresh(new_user)
+    
+    return {
+        "access_token": create_access_token(data={"sub": str(new_user.id)}),
+        "refresh_token": create_refresh_token(data={"sub": str(new_user.id)}),
+        "token_type": "bearer"
+    }
 
 @router.post("/login", response_model=TokenResponse)
 def login(request: LoginSchema, db: Session = Depends(get_db)):
-    """Login user with email and password"""
-    try:
-        logger.info(f"🔐 Login attempt: {request.email}")
-        
-        user = db.query(User).filter(User.email == request.email).first()
-        if not user:
-            raise HTTPException(status_code=401, detail="Invalid email or password")
-        
-        # ✅ Added the same safety extraction used in registration
-        raw_pw = request.password.get_secret_value() if hasattr(request.password, 'get_secret_value') else str(request.password)
-        clean_password = raw_pw.strip()[:72]
-        
-        # Use the clean_password to verify
-        if not verify_password(clean_password, user.password_hash):
-            raise HTTPException(status_code=401, detail="Invalid email or password")
+    user = db.query(User).filter(User.email == request.email).first()
+    raw_pw = request.password.get_secret_value() if hasattr(request.password, 'get_secret_value') else str(request.password)
+    
+    if not user or not verify_password(raw_pw.strip()[:72], user.password_hash):
+        raise HTTPException(status_code=401, detail="Invalid email or password")
+    if not user.is_active:
+        raise HTTPException(status_code=403, detail="User account is inactive")
 
-        if not user.is_active:
-            raise HTTPException(status_code=403, detail="User account is inactive")
-
-        access_token = create_access_token(data={"sub": str(user.id)})
-        refresh_token = create_refresh_token(data={"sub": str(user.id)})
-
-        user_role = getattr(user, "role", "admin" if user.is_admin else "user")
-
-        return {
-            "access_token": access_token,
-            "token_type": "bearer",
-            "user_id": user.id,
-            "user_role": user_role,
-            "is_admin": user.is_admin,
-            "user": {
-                "id": user.id,
-                "email": user.email,
-                "role": user_role,
-                "is_admin": user.is_admin
-            }
-        }
-
-    except HTTPException as e:
-        raise e
-    except Exception as e:
-        logger.error(f"❌ Login error: {str(e)}")
-        raise HTTPException(status_code=500, detail="Login failed")
-
-# ============================================================================
-# REFRESH TOKEN ENDPOINT
-# ============================================================================
+    user_role = getattr(user, "role", "admin" if user.is_admin else "user")
+    return {
+        "access_token": create_access_token(data={"sub": str(user.id)}),
+        "token_type": "bearer",
+        "user_id": user.id,
+        "user_role": user_role,
+        "is_admin": user.is_admin,
+        "user": {"id": user.id, "email": user.email, "role": user_role, "is_admin": user.is_admin}
+    }
 
 class RefreshRequest(BaseModel):
     refresh_token: str
 
 @router.post("/refresh", response_model=TokenResponse)
 def refresh_token(request: RefreshRequest, db: Session = Depends(get_db)):
-    """Refresh access token"""
     try:
-        logger.info("🔄 Token refresh attempt")
-        
-        # ✅ Bulletproof JWT decoding that won't crash Render with missing imports
         parts = request.refresh_token.split(".")
-        if len(parts) != 3:
-            raise ValueError("Invalid JWT format")
-            
-        payload_b64 = parts[1]
-        padded = payload_b64 + "=" * ((4 - len(payload_b64) % 4) % 4)
-        payload = json.loads(base64.urlsafe_b64decode(padded).decode('utf-8'))
-        
-        user_id = payload.get("sub")
-        if not user_id:
-            raise HTTPException(status_code=401, detail="Invalid token payload")
-            
-        # ✅ Verify user still exists and is active
-        user = db.query(User).filter(User.id == int(user_id)).first()
-        if not user or not user.is_active:
-            raise HTTPException(status_code=403, detail="User inactive or not found")
-            
-        # ✅ Generate fresh tokens
-        new_access_token = create_access_token(data={"sub": str(user.id)})
-        new_refresh_token = create_refresh_token(data={"sub": str(user.id)})
-        
-        logger.info(f"✅ Tokens refreshed for user ID: {user.id}")
-        
+        payload = json.loads(base64.urlsafe_b64decode(parts[1] + "=" * ((4 - len(parts[1]) % 4) % 4)).decode('utf-8'))
+        user = db.query(User).filter(User.id == int(payload.get("sub"))).first()
+        if not user or not user.is_active: raise Exception()
         return {
-            "access_token": new_access_token,
-            "refresh_token": new_refresh_token,
+            "access_token": create_access_token(data={"sub": str(user.id)}),
+            "refresh_token": create_refresh_token(data={"sub": str(user.id)}),
             "token_type": "bearer"
         }
-        
-    except Exception as e:
-        logger.error(f"❌ Refresh token error: {e}")
-        raise HTTPException(status_code=401, detail="Invalid or expired refresh token")
+    except:
+        raise HTTPException(status_code=401, detail="Invalid refresh token")
 
-
-# ============================================================================
-# VERIFY EMAIL ENDPOINT
-# ============================================================================
-
-@router.post("/verify-email")
-def verify_email(email: str, db: Session = Depends(get_db)):
-    """Verify email (optional for MVP)"""
-    try:
-        user = db.query(User).filter(User.email == email).first()
-        
-        if not user:
-            raise HTTPException(status_code=404, detail="User not found")
-        
-        # ✅ Mark as verified
-        user.email_verified = True
-        db.commit()
-        
-        logger.info(f"✅ Email verified: {email}")
-        
-        return {"message": "Email verified successfully"}
-        
-    except HTTPException as e:
-        raise e
-    except Exception as e:
-        logger.error(f"❌ Email verification error: {e}")
-        raise HTTPException(status_code=500, detail="Verification failed")
-
-
-# ============================================================================
-# COMPLETE PROFILE ENDPOINT
-# ============================================================================
-
-@router.post("/complete-profile")
-def complete_profile(
-    profile_data: dict,
-    db: Session = Depends(get_db)
-):
-    """Complete user profile after login"""
-    try:
-        # ✅ Get current user from token (from auth header)
-        # For now, we accept any authenticated request
-        # In production, use: current_user: User = Depends(get_current_user)
-        
-        logger.info("🔄 Profile completion request")
-        
-        return {
-            "message": "Profile completed successfully"
-        }
-        
-    except Exception as e:
-        logger.error(f"❌ Profile completion error: {e}")
-        raise HTTPException(status_code=500, detail="Profile completion failed")
-
-
-# ============================================================================
-# GET CURRENT USER ENDPOINT
-# ============================================================================
-
-security = HTTPBearer(auto_error=False)
-
-
-def get_current_user(
-    credentials: HTTPAuthorizationCredentials = Depends(security),
-    db: Session = Depends(get_db),
-):
-    """Verify the Bearer token and return the logged-in user"""
-    if credentials is None or not credentials.credentials:
-        raise HTTPException(status_code=401, detail="Not authenticated")
-
+def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security), db: Session = Depends(get_db)):
+    if not credentials: raise HTTPException(status_code=401, detail="Not authenticated")
     payload = decode_token(credentials.credentials)
-    if not payload:
-        raise HTTPException(status_code=401, detail="Invalid or expired token")
-
-    try:
-        user_id = int(payload.get("sub"))
-    except (TypeError, ValueError):
-        raise HTTPException(status_code=401, detail="Invalid token subject")
-
-    user = db.query(User).filter(User.id == user_id).first()
-    if user is None:
-        raise HTTPException(status_code=401, detail="User not found")
-
-    if getattr(user, "is_active", True) is False:
-        raise HTTPException(status_code=403, detail="Account is deactivated")
-
+    if not payload: raise HTTPException(status_code=401, detail="Invalid token")
+    user = db.query(User).filter(User.id == int(payload.get("sub"))).first()
+    if not user or not getattr(user, "is_active", True): raise HTTPException(status_code=401)
     return user
-
 
 @router.get("/me")
 def read_current_user(current_user: User = Depends(get_current_user)):
-    """Return the logged-in user's profile"""
-    return {
-        "id": current_user.id,
-        "email": current_user.email,
-        "name": getattr(current_user, "name", None),
-        "role": getattr(current_user, "role", None),
-        "is_admin": bool(getattr(current_user, "is_admin", False)),
-    }
-
-# ============================================================================
-# LOGOUT ENDPOINT
-# ============================================================================
+    return {"id": current_user.id, "email": current_user.email, "role": getattr(current_user, "role", None), "is_admin": bool(getattr(current_user, "is_admin", False))}
 
 @router.post("/logout")
-def logout():
-    """Logout user (frontend handles token removal)"""
-    logger.info("👋 User logged out")
-    return {"message": "Logged out successfully"}
+def logout(): return {"message": "Logged out successfully"}
 
-# ============================================================================
-# PASSWORD RESET ENDPOINTS
-# ============================================================================
-import secrets
-from datetime import timedelta
-from sqlalchemy import text
-from pydantic import EmailStr
+# --- Forgot Password Flow (Render Fix applied) ---
 
-class ForgotPasswordRequest(BaseModel):
-    email: EmailStr
-
-class ResetPasswordRequest(BaseModel):
-    token: str
-    new_password: str
-
-@router.post("/forgot-password")
-def forgot_password(request: ForgotPasswordRequest, db: Session = Depends(get_db)):
-    """Generate a secure token and simulate sending an email"""
-    user = db.query(User).filter(User.email == request.email.lower().strip()).first()
-    
-    if not user:
-        # We still return a success message even if the email doesn't exist to prevent email enumeration attacks (security best practice)
-        return {"message": "If that email is in our system, a reset link has been sent."}
-        
-    # Generate a 32-character secure random URL-safe token
-    reset_token = secrets.token_urlsafe(32)
-    
-    # Store token in database (expires in 15 minutes)
-    query = text("""
-        INSERT INTO password_reset_tokens (user_id, token, expires_at)
-        VALUES (:user_id, :token, NOW() + INTERVAL '15 minutes')
-    """)
-    db.execute(query, {"user_id": user.id, "token": reset_token})
-    db.commit()
-    
-    # --- SIMULATE EMAIL SENDING ---
-    # In production, you would use SendGrid, Resend, or AWS SES here.
-    # For now, we print the exact link to your backend logs so you can click it!
-    reset_link = f"https://frontend-livid-two-96gqet7oy4.vercel.app/reset-password?token={reset_token}"
-    logger.warning("==================================================")
-    logger.warning(f"ðŸ”‘ PASSWORD RESET EMAIL INTERCEPTED ðŸ”‘")
-    logger.warning(f"To: {user.email}")
-    logger.warning(f"Click here to reset: {reset_link}")
-    logger.warning("==================================================")
-    
-    return {"message": "If that email is in our system, a reset link has been sent."}
-
-@router.post("/reset-password")
-def reset_password(request: ResetPasswordRequest, db: Session = Depends(get_db)):
-    """Verify token and update the user's password"""
-    # Find a valid, unused token that hasn't expired
-    query = text("""
-        SELECT * FROM password_reset_tokens 
-        WHERE token = :token AND used = FALSE AND expires_at > NOW()
-    """)
-    token_record = db.execute(query, {"token": request.token}).fetchone()
-    
-    if not token_record:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST, 
-            detail="Invalid or expired reset token. Please request a new one."
-        )
-        
-    # Hash the new password
-    hashed_pwd = hash_password(request.new_password)
-    
-    # Update the user's password
-    db.query(User).filter(User.id == token_record.user_id).update({"hashed_password": hashed_pwd})
-    
-    # Mark the token as used so it cannot be reused by hackers
-    db.execute(text("UPDATE password_reset_tokens SET used = TRUE WHERE id = :id"), {"id": token_record.id})
-    db.commit()
-    
-    return {"message": "Password successfully reset. You may now log in."}
-
-import secrets
-from datetime import datetime, timedelta
-import smtplib
-from email.mime.text import MIMEText
-from email.mime.multipart import MIMEMultipart
-import os
-from sqlalchemy import text
-from pydantic import BaseModel
-
-class PasswordResetRequest(BaseModel):
-    email: str
-
-class PasswordResetConfirm(BaseModel):
-    token: str
-    new_password: str
+class PasswordResetRequest(BaseModel): email: str
+class PasswordResetConfirm(BaseModel): token: str; new_password: str
 
 @router.post("/request-password-reset")
 async def request_password_reset(req: PasswordResetRequest, db: Session = Depends(get_db)):
     user = db.query(User).filter(User.email == req.email.lower().strip()).first()
-    if not user:
-        return {"status": "success"} # Security: Don't reveal if email exists or not
+    if not user: return {"status": "success"} 
     
-    # 1. Generate a secure 32-character token
     token = secrets.token_urlsafe(32)
-    expires = datetime.utcnow() + timedelta(minutes=15)
     
-    # 2. Save it to the database using raw SQL to prevent ORM crashes
+    # Store token in Neon
     db.execute(
         text("UPDATE users SET reset_token = :token, reset_token_expires = :expires WHERE id = :uid"),
-        {"token": token, "expires": expires, "uid": user.id}
+        {"token": token, "expires": datetime.utcnow() + timedelta(minutes=15), "uid": user.id}
     )
     db.commit()
 
-    # 3. Send the Email
-    sender_email = os.getenv("SMTP_EMAIL", "ravirajapanthulu@gmail.com")
-    sender_pass = os.getenv("SMTP_PASSWORD", "") # You will need a Gmail App Password here in Render env vars
     reset_link = f"https://frontend-livid-two-96gqet7oy4.vercel.app/login?token={token}"
-    
+    sender_email = os.getenv("SMTP_EMAIL", "ravirajapanthulu@gmail.com")
+    sender_pass = os.getenv("SMTP_PASSWORD", "")
+
     if sender_pass:
         try:
             msg = MIMEMultipart()
             msg['From'] = f"EventAI <{sender_email}>"
             msg['To'] = user.email
             msg['Subject'] = "EventAI - Password Reset Request"
-            body = f"Click the link below to reset your password. This link expires in 15 minutes.\n\n{reset_link}"
-            msg.attach(MIMEText(body, 'plain'))
+            msg.attach(MIMEText(f"Click here to reset your password (expires in 15 mins):\n\n{reset_link}", 'plain'))
             
-            server = smtplib.SMTP('smtp.gmail.com', 587)
-            server.starttls()
+            # FIXED FOR RENDER: Using Port 465 (SMTP_SSL) instead of 587 to bypass network blocks
+            server = smtplib.SMTP_SSL('smtp.gmail.com', 465)
             server.login(sender_email, sender_pass)
             server.send_message(msg)
             server.quit()
         except Exception as e:
-            logger.error(f"Email sending failed: {e}")
+            logger.error(f"Email failed: {e}. Reset link is: {reset_link}")
     else:
-        logger.info(f"*** NO SMTP PASSWORD CONFIGURED. RESET LINK IS: {reset_link} ***")
+        logger.info(f"NO SMTP PASSWORD. LINK IS: {reset_link}")
         
-    return {"status": "success", "message": "If the email exists, a reset link was sent."}
+    return {"status": "success", "message": "Link sent."}
 
 @router.post("/reset-password")
 async def reset_password(req: PasswordResetConfirm, db: Session = Depends(get_db)):
-    # 1. Verify token is valid and not expired
     user_record = db.execute(
         text("SELECT id FROM users WHERE reset_token = :token AND reset_token_expires > :now"),
         {"token": req.token, "now": datetime.utcnow()}
     ).fetchone()
     
     if not user_record:
-        raise HTTPException(status_code=400, detail="Invalid or expired reset link. Please request a new one.")
+        raise HTTPException(status_code=400, detail="Invalid or expired reset link.")
         
-    # 2. Hash the new password and clear the token so it can't be used again
-    hashed = hash_password(req.new_password)
     db.execute(
-        text("UPDATE users SET hashed_password = :hp, reset_token = NULL, reset_token_expires = NULL WHERE id = :uid"),
-        {"hp": hashed, "uid": user_record[0]}
+        text("UPDATE users SET password_hash = :hp, reset_token = NULL, reset_token_expires = NULL WHERE id = :uid"),
+        {"hp": hash_password(req.new_password), "uid": user_record[0]}
     )
     db.commit()
-    return {"status": "success", "message": "Password updated successfully."}
+    return {"status": "success", "message": "Password updated."}
