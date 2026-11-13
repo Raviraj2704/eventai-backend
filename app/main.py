@@ -137,7 +137,7 @@ app.add_middleware(GZipMiddleware, minimum_size=1000)
 
 # Import all 19 route files (includes analytics and AI routes)
 from app.routes import (
-    auth, sessions, speakers, resources, badges,notifications,
+    auth, sessions, speakers, resources, badges,notifications, chat,
     challenges, leaderboard, learning_paths, ratings,
     social, announcements, engagement, partners, users, admin, analytics, ai_routes, session_admin, messages, events, activity_feed, session_hub
 )
@@ -149,7 +149,7 @@ app.include_router(auth.router, prefix="/api/v1/auth", tags=["Auth"])
 app.include_router(users.router, prefix="/api/v1/users", tags=["Users"])
 app.include_router(events.router, prefix="/api/v1/events", tags=["Events"])
 app.include_router(follow_router, prefix="/api/v1/speakers", tags=["Speaker Follow"])
-app.include_router(chat_router, prefix="/api/v1/chat", tags=["Chat"])
+app.include_router(chat.router, prefix="/api/v1/chat", tags=["chat"])
 app.include_router(activity_feed.router, prefix="/api/v1/activity", tags=["Activity Feed"])
 app.include_router(event_info.router, prefix="/api/v1/event-info", tags=["Event Info / Infodesk"])
 app.include_router(partner_hub.router, prefix="/api/v1/partner-hub", tags=["Partner Hub"])
