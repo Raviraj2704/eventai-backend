@@ -291,3 +291,78 @@ def logout():
     """Logout user (frontend handles token removal)"""
     logger.info("👋 User logged out")
     return {"message": "Logged out successfully"}
+
+# ============================================================================
+# PASSWORD RESET ENDPOINTS
+# ============================================================================
+import secrets
+from datetime import timedelta
+from sqlalchemy import text
+from pydantic import EmailStr
+
+class ForgotPasswordRequest(BaseModel):
+    email: EmailStr
+
+class ResetPasswordRequest(BaseModel):
+    token: str
+    new_password: str
+
+@router.post("/forgot-password")
+def forgot_password(request: ForgotPasswordRequest, db: Session = Depends(get_db)):
+    """Generate a secure token and simulate sending an email"""
+    user = db.query(User).filter(User.email == request.email.lower().strip()).first()
+    
+    if not user:
+        # We still return a success message even if the email doesn't exist to prevent email enumeration attacks (security best practice)
+        return {"message": "If that email is in our system, a reset link has been sent."}
+        
+    # Generate a 32-character secure random URL-safe token
+    reset_token = secrets.token_urlsafe(32)
+    
+    # Store token in database (expires in 15 minutes)
+    query = text("""
+        INSERT INTO password_reset_tokens (user_id, token, expires_at)
+        VALUES (:user_id, :token, NOW() + INTERVAL '15 minutes')
+    """)
+    db.execute(query, {"user_id": user.id, "token": reset_token})
+    db.commit()
+    
+    # --- SIMULATE EMAIL SENDING ---
+    # In production, you would use SendGrid, Resend, or AWS SES here.
+    # For now, we print the exact link to your backend logs so you can click it!
+    reset_link = f"https://frontend-livid-two-96gqet7oy4.vercel.app/reset-password?token={reset_token}"
+    logger.warning("==================================================")
+    logger.warning(f"ðŸ”‘ PASSWORD RESET EMAIL INTERCEPTED ðŸ”‘")
+    logger.warning(f"To: {user.email}")
+    logger.warning(f"Click here to reset: {reset_link}")
+    logger.warning("==================================================")
+    
+    return {"message": "If that email is in our system, a reset link has been sent."}
+
+@router.post("/reset-password")
+def reset_password(request: ResetPasswordRequest, db: Session = Depends(get_db)):
+    """Verify token and update the user's password"""
+    # Find a valid, unused token that hasn't expired
+    query = text("""
+        SELECT * FROM password_reset_tokens 
+        WHERE token = :token AND used = FALSE AND expires_at > NOW()
+    """)
+    token_record = db.execute(query, {"token": request.token}).fetchone()
+    
+    if not token_record:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, 
+            detail="Invalid or expired reset token. Please request a new one."
+        )
+        
+    # Hash the new password
+    hashed_pwd = hash_password(request.new_password)
+    
+    # Update the user's password
+    db.query(User).filter(User.id == token_record.user_id).update({"hashed_password": hashed_pwd})
+    
+    # Mark the token as used so it cannot be reused by hackers
+    db.execute(text("UPDATE password_reset_tokens SET used = TRUE WHERE id = :id"), {"id": token_record.id})
+    db.commit()
+    
+    return {"message": "Password successfully reset. You may now log in."}
