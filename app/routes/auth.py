@@ -366,3 +366,82 @@ def reset_password(request: ResetPasswordRequest, db: Session = Depends(get_db))
     db.commit()
     
     return {"message": "Password successfully reset. You may now log in."}
+
+import secrets
+from datetime import datetime, timedelta
+import smtplib
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
+import os
+from sqlalchemy import text
+from pydantic import BaseModel
+
+class PasswordResetRequest(BaseModel):
+    email: str
+
+class PasswordResetConfirm(BaseModel):
+    token: str
+    new_password: str
+
+@router.post("/request-password-reset")
+async def request_password_reset(req: PasswordResetRequest, db: Session = Depends(get_db)):
+    user = db.query(User).filter(User.email == req.email.lower().strip()).first()
+    if not user:
+        return {"status": "success"} # Security: Don't reveal if email exists or not
+    
+    # 1. Generate a secure 32-character token
+    token = secrets.token_urlsafe(32)
+    expires = datetime.utcnow() + timedelta(minutes=15)
+    
+    # 2. Save it to the database using raw SQL to prevent ORM crashes
+    db.execute(
+        text("UPDATE users SET reset_token = :token, reset_token_expires = :expires WHERE id = :uid"),
+        {"token": token, "expires": expires, "uid": user.id}
+    )
+    db.commit()
+
+    # 3. Send the Email
+    sender_email = os.getenv("SMTP_EMAIL", "ravirajapanthulu@gmail.com")
+    sender_pass = os.getenv("SMTP_PASSWORD", "") # You will need a Gmail App Password here in Render env vars
+    reset_link = f"https://frontend-livid-two-96gqet7oy4.vercel.app/login?token={token}"
+    
+    if sender_pass:
+        try:
+            msg = MIMEMultipart()
+            msg['From'] = f"EventAI <{sender_email}>"
+            msg['To'] = user.email
+            msg['Subject'] = "EventAI - Password Reset Request"
+            body = f"Click the link below to reset your password. This link expires in 15 minutes.\n\n{reset_link}"
+            msg.attach(MIMEText(body, 'plain'))
+            
+            server = smtplib.SMTP('smtp.gmail.com', 587)
+            server.starttls()
+            server.login(sender_email, sender_pass)
+            server.send_message(msg)
+            server.quit()
+        except Exception as e:
+            logger.error(f"Email sending failed: {e}")
+    else:
+        logger.info(f"*** NO SMTP PASSWORD CONFIGURED. RESET LINK IS: {reset_link} ***")
+        
+    return {"status": "success", "message": "If the email exists, a reset link was sent."}
+
+@router.post("/reset-password")
+async def reset_password(req: PasswordResetConfirm, db: Session = Depends(get_db)):
+    # 1. Verify token is valid and not expired
+    user_record = db.execute(
+        text("SELECT id FROM users WHERE reset_token = :token AND reset_token_expires > :now"),
+        {"token": req.token, "now": datetime.utcnow()}
+    ).fetchone()
+    
+    if not user_record:
+        raise HTTPException(status_code=400, detail="Invalid or expired reset link. Please request a new one.")
+        
+    # 2. Hash the new password and clear the token so it can't be used again
+    hashed = hash_password(req.new_password)
+    db.execute(
+        text("UPDATE users SET hashed_password = :hp, reset_token = NULL, reset_token_expires = NULL WHERE id = :uid"),
+        {"hp": hashed, "uid": user_record[0]}
+    )
+    db.commit()
+    return {"status": "success", "message": "Password updated successfully."}
