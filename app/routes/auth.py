@@ -114,14 +114,16 @@ def logout(): return {"message": "Logged out successfully"}
 class PasswordResetRequest(BaseModel): email: str
 class PasswordResetConfirm(BaseModel): token: str; new_password: str
 
+import urllib.request
+
 @router.post("/request-password-reset")
 async def request_password_reset(req: PasswordResetRequest, db: Session = Depends(get_db)):
     user = db.query(User).filter(User.email == req.email.lower().strip()).first()
-    if not user: return {"status": "success"} 
-    
+    if not user:
+        return {"status": "success", "message": "If registered, reset link sent."}
+
     token = secrets.token_urlsafe(32)
-    
-    # Store token in Neon
+
     db.execute(
         text("UPDATE users SET reset_token = :token, reset_token_expires = :expires WHERE id = :uid"),
         {"token": token, "expires": datetime.utcnow() + timedelta(minutes=15), "uid": user.id}
@@ -130,27 +132,45 @@ async def request_password_reset(req: PasswordResetRequest, db: Session = Depend
 
     reset_link = f"https://frontend-livid-two-96gqet7oy4.vercel.app/login?token={token}"
     sender_email = os.getenv("SMTP_EMAIL", "ravirajapanthulu@gmail.com")
-    sender_pass = os.getenv("SMTP_PASSWORD", "")
+    brevo_key = os.getenv("BREVO_API_KEY", "")
 
-    if sender_pass:
-        try:
-            msg = MIMEMultipart()
-            msg['From'] = f"EventAI <{sender_email}>"
-            msg['To'] = user.email
-            msg['Subject'] = "EventAI - Password Reset Request"
-            msg.attach(MIMEText(f"Click here to reset your password (expires in 15 mins):\n\n{reset_link}", 'plain'))
-            
-            # FIXED FOR RENDER: Using Port 465 (SMTP_SSL) instead of 587 to bypass network blocks
-            server = smtplib.SMTP_SSL('smtp.gmail.com', 465)
-            server.login(sender_email, sender_pass)
-            server.send_message(msg)
-            server.quit()
-        except Exception as e:
-            logger.error(f"Email failed: {e}. Reset link is: {reset_link}")
-    else:
-        logger.info(f"NO SMTP PASSWORD. LINK IS: {reset_link}")
-        
-    return {"status": "success", "message": "Link sent."}
+    if not brevo_key:
+        logger.error(f"BREVO_API_KEY missing in Render Environment! Reset link: {reset_link}")
+        raise HTTPException(status_code=500, detail="Email service API key not configured on server.")
+
+    payload = json.dumps({
+        "sender": {"name": "EventAI", "email": sender_email},
+        "to": [{"email": user.email}],
+        "subject": "EventAI - Reset Your Password",
+        "htmlContent": f"""
+            <div style="font-family: sans-serif; max-width: 480px; margin: auto; padding: 24px; border: 1px solid #e2e8f0; border-radius: 12px;">
+                <h2 style="color: #0000c8; margin-bottom: 8px;">EventAI Password Reset</h2>
+                <p style="color: #334155; font-size: 15px;">Click the button below to set a new password. This link expires in 15 minutes.</p>
+                <a href="{reset_link}" style="display: inline-block; margin-top: 16px; padding: 12px 24px; background-color: #0000c8; color: #ffffff; text-decoration: none; font-weight: bold; border-radius: 8px;">Reset Password</a>
+                <p style="color: #94a3b8; font-size: 12px; margin-top: 24px;">Or copy this link: {reset_link}</p>
+            </div>
+        """
+    }).encode("utf-8")
+
+    http_req = urllib.request.Request(
+        "https://api.brevo.com/v3/smtp/email",
+        data=payload,
+        headers={
+            "accept": "application/json",
+            "api-key": brevo_key,
+            "content-type": "application/json"
+        },
+        method="POST"
+    )
+
+    try:
+        with urllib.request.urlopen(http_req, timeout=10) as response:
+            logger.info(f"Password reset email sent to {user.email} (HTTP {response.status})")
+    except Exception as e:
+        logger.error(f"Brevo HTTP Email failed: {e}")
+        raise HTTPException(status_code=500, detail="Failed to send reset email")
+
+    return {"status": "success", "message": "Reset link sent to your email."}
 
 @router.post("/reset-password")
 async def reset_password(req: PasswordResetConfirm, db: Session = Depends(get_db)):
