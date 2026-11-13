@@ -9,7 +9,7 @@
 from sqlalchemy import (
     Column, Integer, String, Text, Boolean, Float, DateTime, 
     ForeignKey, JSON, Enum as SQLEnum, Table, UniqueConstraint,
-    Index
+    Index, func
 )
 from sqlalchemy.orm import relationship
 from datetime import datetime
@@ -1924,4 +1924,43 @@ class ChatMessage(Base):
     
     # Relationships
     connection = relationship("ChatConnection", back_populates="messages")
-    sender = relationship("User", foreign_keys=[sender_id])    
+    sender = relationship("User", foreign_keys=[sender_id])
+
+# ==========================================
+# CHAT & CONNECTION MODELS
+# ==========================================
+
+class ChatConnection(Base):
+    __tablename__ = "chat_connections"
+
+    id = Column(Integer, primary_key=True, index=True)
+    sender_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    receiver_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    
+    # status can be: 'pending', 'accepted', 'rejected', 'blocked'
+    status = Column(String, default="pending", nullable=False) 
+    
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+
+    # Relationships
+    sender = relationship("User", foreign_keys=[sender_id])
+    receiver = relationship("User", foreign_keys=[receiver_id])
+    messages = relationship("ChatMessage", back_populates="connection", cascade="all, delete-orphan")
+
+
+class ChatMessage(Base):
+    __tablename__ = "chat_messages"
+
+    id = Column(Integer, primary_key=True, index=True)
+    connection_id = Column(Integer, ForeignKey("chat_connections.id", ondelete="CASCADE"), nullable=False)
+    sender_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    
+    content = Column(Text, nullable=False)
+    is_read = Column(Boolean, default=False)
+    
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    # Relationships
+    connection = relationship("ChatConnection", back_populates="messages")
+    sender = relationship("User", foreign_keys=[sender_id])        
