@@ -1891,3 +1891,37 @@ class SessionQuiz(Base):
     questions = Column(JSON, nullable=False, default=list)
     created_by = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     updated_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+
+# ============================================================================
+# CHAT & MESSAGING MODELS
+# ============================================================================
+
+class ChatConnection(Base):
+    __tablename__ = "chat_connections"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    sender_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    receiver_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    status = Column(String(50), default="pending")  # pending, accepted, rejected, blocked
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    # Relationships
+    sender = relationship("User", foreign_keys=[sender_id])
+    receiver = relationship("User", foreign_keys=[receiver_id])
+    messages = relationship("ChatMessage", back_populates="connection", cascade="all, delete-orphan")
+
+
+class ChatMessage(Base):
+    __tablename__ = "chat_messages"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    connection_id = Column(Integer, ForeignKey("chat_connections.id"), nullable=False)
+    sender_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    content = Column(Text, nullable=False)
+    is_read = Column(Boolean, default=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    
+    # Relationships
+    connection = relationship("ChatConnection", back_populates="messages")
+    sender = relationship("User", foreign_keys=[sender_id])    
