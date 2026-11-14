@@ -1,134 +1,218 @@
+# ============================================================================
+# Chat Router - Handles connections, accept/reject, and messaging
+# File: app/routes/chat.py
+# ============================================================================
+
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from sqlalchemy import or_, and_
+from pydantic import BaseModel
 from typing import List, Optional
 from datetime import datetime
-from pydantic import BaseModel
+
 from app.database import get_db
-from app.models import User, ChatConnection, ChatMessage
+from app.models import ChatConnection, ChatMessage, User
 
-router = APIRouter(prefix="/api/v1/chat", tags=["Chat"])
+# Adjust this import if your auth dependency is located elsewhere (e.g., app.dependencies)
+try:
+    from app.routes.auth import get_current_user
+except ImportError:
+    # Fallback to avoid crashes if auth structure is different
+    def get_current_user():
+        raise HTTPException(status_code=401, detail="Auth dependency not found")
 
-# --- Pydantic Schemas ---
-class ChatRequest(BaseModel):
-    receiver_id: int
+router = APIRouter()
 
-class ChatRespond(BaseModel):
-    status: str  # 'accepted' or 'rejected'
-
+# --- Schemas ---
 class MessageCreate(BaseModel):
     content: str
 
-# Note: Replace `get_current_user` with your actual auth dependency if it's located elsewhere.
-# For now, we will expect a `user_id` query parameter for easy testing, 
-# but in production this should be extracted from the JWT token.
-def get_user_id(user_id: int) -> int:
-    return user_id
+class RespondRequest(BaseModel):
+    status: str  # 'accepted' or 'rejected'
+
+# --- Routes ---
 
 @router.get("/list")
-async def get_chat_list(user_id: int, db: Session = Depends(get_db)):
-    """Groups chats into Active, Request Received, and Request Sent matching the UI tabs."""
+def get_chat_list(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    """
+    Returns lists of Active Chats, Requests Received, and Requests Sent for the UI tabs.
+    """
+    uid = current_user.id
+    
     connections = db.query(ChatConnection).filter(
-        or_(ChatConnection.sender_id == user_id, ChatConnection.receiver_id == user_id)
+        or_(ChatConnection.sender_id == uid, ChatConnection.receiver_id == uid)
     ).all()
 
-    active_chats = []
-    requests_received = []
-    requests_sent = []
+    active, received, sent = [], [], []
 
-    for conn in connections:
-        other_user_id = conn.receiver_id if conn.sender_id == user_id else conn.sender_id
-        other_user = db.query(User).filter(User.id == other_user_id).first()
+    for c in connections:
+        # Identify the other person in the chat
+        is_sender = (c.sender_id == uid)
+        other_user = c.receiver if is_sender else c.sender
         
-        if not other_user:
-            continue
-            
+        # Get latest message
+        last_message = db.query(ChatMessage).filter(ChatMessage.connection_id == c.id).order_by(ChatMessage.created_at.desc()).first()
+        
+        name = getattr(other_user, 'name', None) or getattr(other_user, 'full_name', None) or getattr(other_user, 'email', "User")
+        
         chat_data = {
-            "connection_id": conn.id,
-            "user": {
-                "id": other_user.id,
-                "name": f"{other_user.first_name} {other_user.last_name}",
-                "avatar": other_user.avatar_url
-            },
-            "status": conn.status,
-            "updated_at": conn.updated_at
+            "id": c.id,
+            "user_id": other_user.id,
+            "name": name,
+            "avatar": name[:2].upper() if name else "U",
+            "status": c.status,
+            "unread": 0,
+            "message": last_message.content if last_message else "No messages yet",
+            "date": last_message.created_at.strftime("%d %b") if last_message else c.created_at.strftime("%d %b")
         }
 
-        if conn.status == "accepted":
-            active_chats.append(chat_data)
-        elif conn.status == "pending":
-            if conn.receiver_id == user_id:
-                requests_received.append(chat_data)
-            else:
-                requests_sent.append(chat_data)
+        if c.status == "accepted":
+            active.append(chat_data)
+        elif c.status == "pending" and not is_sender:
+            received.append(chat_data)
+        elif c.status == "pending" and is_sender:
+            sent.append(chat_data)
 
     return {
-        "active": active_chats,
-        "received": requests_received,
-        "sent": requests_sent,
-        "total_found": len(active_chats) + len(requests_received) + len(requests_sent)
+        "status": "success",
+        "data": {
+            "active": active,
+            "received": received,
+            "sent": sent
+        }
     }
 
-@router.post("/request")
-async def send_chat_request(req: ChatRequest, user_id: int, db: Session = Depends(get_db)):
-    """Sends a new chat request to a user (Waiting for approval state)."""
+
+@router.post("/request/{target_user_id}")
+def send_chat_request(target_user_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    """
+    Sends a new connection request to another user.
+    """
+    if target_user_id == current_user.id:
+        raise HTTPException(status_code=400, detail="Cannot send a chat request to yourself.")
+
+    target_user = db.query(User).filter(User.id == target_user_id).first()
+    if not target_user:
+        raise HTTPException(status_code=404, detail="User not found.")
+
+    # Check if a connection already exists
     existing = db.query(ChatConnection).filter(
         or_(
-            and_(ChatConnection.sender_id == user_id, ChatConnection.receiver_id == req.receiver_id),
-            and_(ChatConnection.sender_id == req.receiver_id, ChatConnection.receiver_id == user_id)
+            and_(ChatConnection.sender_id == current_user.id, ChatConnection.receiver_id == target_user_id),
+            and_(ChatConnection.sender_id == target_user_id, ChatConnection.receiver_id == current_user.id)
         )
     ).first()
 
     if existing:
-        raise HTTPException(status_code=400, detail=f"Chat connection already exists (Status: {existing.status})")
+        return {"status": "success", "message": f"Connection already exists with status: {existing.status}", "connection_id": existing.id}
 
-    new_conn = ChatConnection(sender_id=user_id, receiver_id=req.receiver_id, status="pending")
+    new_conn = ChatConnection(
+        sender_id=current_user.id,
+        receiver_id=target_user_id,
+        status="pending"
+    )
     db.add(new_conn)
     db.commit()
     db.refresh(new_conn)
-    return {"message": "Chat request sent", "connection_id": new_conn.id}
+
+    return {"status": "success", "message": "Chat request sent.", "connection_id": new_conn.id}
+
 
 @router.put("/respond/{connection_id}")
-async def respond_to_request(connection_id: int, req: ChatRespond, user_id: int, db: Session = Depends(get_db)):
-    """Accepts or rejects an inbound chat request."""
+def respond_to_request(connection_id: int, req: RespondRequest, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    """
+    Accepts or rejects an incoming chat request.
+    """
     conn = db.query(ChatConnection).filter(ChatConnection.id == connection_id).first()
     if not conn:
-        raise HTTPException(status_code=404, detail="Connection not found")
-        
-    if conn.receiver_id != user_id:
-        raise HTTPException(status_code=403, detail="Not authorized to respond to this request")
+        raise HTTPException(status_code=404, detail="Connection not found.")
+
+    if conn.receiver_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Not authorized to respond to this request.")
 
     if req.status not in ["accepted", "rejected"]:
-        raise HTTPException(status_code=400, detail="Invalid status")
+        raise HTTPException(status_code=400, detail="Invalid status. Must be 'accepted' or 'rejected'.")
 
     conn.status = req.status
-    conn.updated_at = datetime.utcnow()
     db.commit()
-    return {"message": f"Chat request {req.status}", "connection_id": conn.id}
+
+    return {"status": "success", "message": f"Request {req.status} successfully."}
+
 
 @router.get("/{connection_id}/messages")
-async def get_messages(connection_id: int, user_id: int, db: Session = Depends(get_db)):
-    """Fetches the message history for a specific chat connection."""
+def get_messages(connection_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    """
+    Retrieves chat history for an accepted connection.
+    """
     conn = db.query(ChatConnection).filter(ChatConnection.id == connection_id).first()
-    if not conn or (conn.sender_id != user_id and conn.receiver_id != user_id):
-        raise HTTPException(status_code=404, detail="Chat not found")
+    if not conn:
+        raise HTTPException(status_code=404, detail="Connection not found.")
+
+    if current_user.id not in [conn.sender_id, conn.receiver_id]:
+        raise HTTPException(status_code=403, detail="Not authorized to view these messages.")
 
     messages = db.query(ChatMessage).filter(ChatMessage.connection_id == connection_id).order_by(ChatMessage.created_at.asc()).all()
-    return {"status": conn.status, "messages": messages}
+
+    formatted = []
+    for m in messages:
+        formatted.append({
+            "id": m.id,
+            "text": m.content,
+            "sender": "me" if m.sender_id == current_user.id else "them",
+            "time": m.created_at.strftime("%d %b, %I:%M %p")
+        })
+
+    return {"status": "success", "connection_status": conn.status, "data": formatted}
+
 
 @router.post("/{connection_id}/messages")
-async def send_message(connection_id: int, req: MessageCreate, user_id: int, db: Session = Depends(get_db)):
-    """Sends a message in an active chat."""
+def send_message(connection_id: int, msg: MessageCreate, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    """
+    Sends a new message in an active chat.
+    """
     conn = db.query(ChatConnection).filter(ChatConnection.id == connection_id).first()
-    if not conn or (conn.sender_id != user_id and conn.receiver_id != user_id):
-        raise HTTPException(status_code=404, detail="Chat not found")
-        
-    if conn.status != "accepted":
-        raise HTTPException(status_code=403, detail="Cannot send messages. Chat is not active.")
+    if not conn:
+        raise HTTPException(status_code=404, detail="Connection not found.")
 
-    msg = ChatMessage(connection_id=connection_id, sender_id=user_id, content=req.content)
-    db.add(msg)
-    conn.updated_at = datetime.utcnow()
+    if current_user.id not in [conn.sender_id, conn.receiver_id]:
+        raise HTTPException(status_code=403, detail="Not authorized to send messages here.")
+
+    if conn.status != "accepted":
+        raise HTTPException(status_code=403, detail="You can only send messages in accepted chats.")
+
+    new_msg = ChatMessage(
+        connection_id=connection_id,
+        sender_id=current_user.id,
+        content=msg.content
+    )
+    
+    db.add(new_msg)
     db.commit()
-    db.refresh(msg)
-    return {"message": "Message sent", "data": msg}
+    db.refresh(new_msg)
+
+    return {
+        "status": "success", 
+        "data": {
+            "id": new_msg.id, 
+            "text": new_msg.content, 
+            "sender": "me", 
+            "time": new_msg.created_at.strftime("%d %b, %I:%M %p")
+        }
+    }
+
+@router.get("/users")
+def get_available_users(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    """
+    Returns a list of all users to start a new chat with.
+    """
+    users = db.query(User).filter(User.id != current_user.id).all()
+    formatted_users = []
+    for u in users:
+        name = getattr(u, 'name', None) or getattr(u, 'full_name', None) or getattr(u, 'email', "User")
+        formatted_users.append({
+            "id": u.id,
+            "name": name,
+            "avatar": name[:2].upper()
+        })
+        
+    return {"status": "success", "data": formatted_users}    
