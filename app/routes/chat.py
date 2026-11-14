@@ -55,6 +55,14 @@ def get_chat_list(db: Session = Depends(get_db), current_user: User = Depends(ge
         
         name = getattr(other_user, 'name', None) or getattr(other_user, 'full_name', None) or getattr(other_user, 'email', "User")
         
+        # Safely handle dates even if Neon returns NULL for created_at
+        if last_message and last_message.created_at:
+            display_date = last_message.created_at.strftime("%d %b")
+        elif c.created_at:
+            display_date = c.created_at.strftime("%d %b")
+        else:
+            display_date = datetime.utcnow().strftime("%d %b")
+
         chat_data = {
             "id": c.id,
             "user_id": other_user.id,
@@ -63,7 +71,7 @@ def get_chat_list(db: Session = Depends(get_db), current_user: User = Depends(ge
             "status": c.status,
             "unread": 0,
             "message": last_message.content if last_message else "No messages yet",
-            "date": last_message.created_at.strftime("%d %b") if last_message else c.created_at.strftime("%d %b")
+            "date": display_date
         }
 
         if c.status == "accepted":
