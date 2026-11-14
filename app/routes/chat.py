@@ -188,14 +188,5 @@ def send_message(connection_id: int, msg: MessageCreate, db: Session = Depends(g
     
     db.add(new_msg)
     db.commit()
-    db.refresh(new_msg)
-
-    return {
-        "status": "success", 
-        "data": {
-            "id": new_msg.id, 
-            "text": new_msg.content, 
-            "sender": "me", 
-            "time": new_msg.created_at.strftime("%d %b, %I:%M %p")
-        }
-    }
+    db.refresh(msg)
+    return {"message": "Message sent", "data": msg}
