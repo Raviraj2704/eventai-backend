@@ -230,3 +230,21 @@ def get_available_users(db: Session = Depends(get_db), current_user: User = Depe
         })
         
     return {"status": "success", "data": formatted_users}    
+
+@router.delete("/messages/{message_id}")
+def delete_message(message_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    """
+    Deletes a specific chat message. Ensures the user can only delete their own messages.
+    """
+    msg = db.query(ChatMessage).filter(ChatMessage.id == message_id).first()
+    
+    if not msg:
+        raise HTTPException(status_code=404, detail="Message not found.")
+
+    if msg.sender_id != current_user.id:
+        raise HTTPException(status_code=403, detail="You can only delete your own messages.")
+
+    db.delete(msg)
+    db.commit()
+
+    return {"status": "success", "message": "Message deleted successfully."}
