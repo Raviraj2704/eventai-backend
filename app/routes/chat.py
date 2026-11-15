@@ -150,7 +150,7 @@ def respond_to_request(connection_id: int, req: RespondRequest, db: Session = De
 @router.get("/{connection_id}/messages")
 def get_messages(connection_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     """
-    Retrieves chat history for an accepted connection.
+    Retrieves chat history for an accepted connection safely.
     """
     conn = db.query(ChatConnection).filter(ChatConnection.id == connection_id).first()
     if not conn:
@@ -163,11 +163,14 @@ def get_messages(connection_id: int, db: Session = Depends(get_db), current_user
 
     formatted = []
     for m in messages:
+        # Safely handle missing timestamps
+        msg_time = m.created_at.strftime("%d %b, %I:%M %p") if m.created_at else datetime.utcnow().strftime("%d %b, %I:%M %p")
+        
         formatted.append({
             "id": m.id,
             "text": m.content,
             "sender": "me" if m.sender_id == current_user.id else "them",
-            "time": m.created_at.strftime("%d %b, %I:%M %p")
+            "time": msg_time
         })
 
     return {"status": "success", "connection_status": conn.status, "data": formatted}
@@ -176,7 +179,7 @@ def get_messages(connection_id: int, db: Session = Depends(get_db), current_user
 @router.post("/{connection_id}/messages")
 def send_message(connection_id: int, msg: MessageCreate, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     """
-    Sends a new message in an active chat.
+    Sends a new message in an active chat safely.
     """
     conn = db.query(ChatConnection).filter(ChatConnection.id == connection_id).first()
     if not conn:
@@ -198,17 +201,20 @@ def send_message(connection_id: int, msg: MessageCreate, db: Session = Depends(g
     db.commit()
     db.refresh(new_msg)
 
+    # Safely handle missing timestamps on newly inserted rows
+    msg_time = new_msg.created_at.strftime("%d %b, %I:%M %p") if new_msg.created_at else datetime.utcnow().strftime("%d %b, %I:%M %p")
+
     return {
         "status": "success", 
         "data": {
             "id": new_msg.id, 
             "text": new_msg.content, 
             "sender": "me", 
-            "time": new_msg.created_at.strftime("%d %b, %I:%M %p")
+            "time": msg_time
         }
     }
 
-@router.get("/users")
+@router.get("/users")  
 def get_available_users(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     """
     Returns a list of all users to start a new chat with.
