@@ -31,6 +31,7 @@ from app.database import get_db
 from app.models import Base, Session as SessionModel, Speaker, User
 from app.routes.auth import get_current_user
 from app.routes.session_hub import SessionExtras
+from app.upload_checks import detect_image_type
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -377,6 +378,8 @@ async def upload_session_image(
         raise HTTPException(status_code=400, detail="The photo is empty")
     if len(data) > MAX_IMAGE_BYTES:
         raise HTTPException(status_code=400, detail="Photo must be 5 MB or smaller")
+    if detect_image_type(data) is None:
+        raise HTTPException(status_code=400, detail="File content is not a valid JPG, PNG, or WEBP image")
 
     _configure_cloudinary()
     try:

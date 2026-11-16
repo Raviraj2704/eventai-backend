@@ -5,6 +5,7 @@
 # Purpose: User profile management endpoints
 # Status: Production-Ready ✅
 
+from app.upload_checks import detect_image_type
 from app.routes.blocks import blocked_user_ids
 from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Query, Body
 from typing import Optional, Dict, Any
@@ -330,6 +331,8 @@ async def upload_avatar(
         raise HTTPException(status_code=400, detail="The file is empty")
     if len(contents) > MAX_AVATAR_BYTES:
         raise HTTPException(status_code=400, detail="Image must be 5 MB or smaller")
+    if detect_image_type(contents) is None:
+        raise HTTPException(status_code=400, detail="File content is not a valid JPG, PNG, or WEBP image")
 
     _configure_cloudinary()
     try:
