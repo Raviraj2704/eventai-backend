@@ -14,7 +14,8 @@ from datetime import datetime, timedelta
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Request
+from app.rate_limit import limiter
 from sqlalchemy.orm import Session
 from sqlalchemy import text
 from pydantic import BaseModel
@@ -32,24 +33,25 @@ security = HTTPBearer(auto_error=False)
 # --- Standard Auth Routes ---
 
 @router.post("/register", response_model=TokenResponse)
-def register(request: RegisterSchema, db: Session = Depends(get_db)):
-    existing_user = db.query(User).filter(User.email == request.email).first()
+@limiter.limit("5/minute")
+def register(request: Request, payload: RegisterSchema, db: Session = Depends(get_db)):
+    existing_user = db.query(User).filter(User.email == payload.email).first()
     if existing_user:
         raise HTTPException(status_code=400, detail="Email already registered")
-    
-    raw_pw = request.password.get_secret_value() if hasattr(request.password, 'get_secret_value') else str(request.password)
+
+    raw_pw = payload.password.get_secret_value() if hasattr(payload.password, 'get_secret_value') else str(payload.password)
     new_user = User(
-        username=request.email.split("@")[0],
-        first_name=request.first_name,
-        last_name=request.last_name,
-        email=request.email,
+        username=payload.email.split("@")[0],
+        first_name=payload.first_name,
+        last_name=payload.last_name,
+        email=payload.email,
         password_hash=hash_password(raw_pw.strip()[:72]),
         is_active=True,
     )
     db.add(new_user)
     db.commit()
     db.refresh(new_user)
-    
+
     return {
         "access_token": create_access_token(data={"sub": str(new_user.id)}),
         "refresh_token": create_refresh_token(data={"sub": str(new_user.id)}),
@@ -57,10 +59,11 @@ def register(request: RegisterSchema, db: Session = Depends(get_db)):
     }
 
 @router.post("/login", response_model=TokenResponse)
-def login(request: LoginSchema, db: Session = Depends(get_db)):
-    user = db.query(User).filter(User.email == request.email).first()
-    raw_pw = request.password.get_secret_value() if hasattr(request.password, 'get_secret_value') else str(request.password)
-    
+@limiter.limit("10/minute")
+def login(request: Request, payload: LoginSchema, db: Session = Depends(get_db)):
+    user = db.query(User).filter(User.email == payload.email).first()
+    raw_pw = payload.password.get_secret_value() if hasattr(payload.password, 'get_secret_value') else str(payload.password)
+
     if not user or not verify_password(raw_pw.strip()[:72], user.password_hash):
         raise HTTPException(status_code=401, detail="Invalid email or password")
     if not user.is_active:
@@ -117,8 +120,8 @@ class PasswordResetConfirm(BaseModel): token: str; new_password: str
 import urllib.request
 
 @router.post("/request-password-reset")
-async def request_password_reset(req: PasswordResetRequest, db: Session = Depends(get_db)):
-    # 1. Ensure columns exist in Neon so SQL never throws a 500
+@limiter.limit("3/minute")
+async def request_password_reset(request: Request, req: PasswordResetRequest, db: Session = Depends(get_db)):    # 1. Ensure columns exist in Neon so SQL never throws a 500
     try:
         db.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS reset_token VARCHAR(255)"))
         db.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS reset_token_expires TIMESTAMP"))
@@ -201,7 +204,8 @@ async def request_password_reset(req: PasswordResetRequest, db: Session = Depend
     return {"status": "success", "message": "Reset link sent to your email."}
 
 @router.post("/reset-password")
-async def reset_password(req: PasswordResetConfirm, db: Session = Depends(get_db)):
+@limiter.limit("5/minute")
+async def reset_password(request: Request, req: PasswordResetConfirm, db: Session = Depends(get_db)):
     user_record = db.execute(
         text("SELECT id FROM users WHERE reset_token = :token AND reset_token_expires > :now"),
         {"token": req.token, "now": datetime.utcnow()}

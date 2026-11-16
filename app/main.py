@@ -24,9 +24,8 @@ from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
-from slowapi import Limiter
+from app.rate_limit import limiter
 from slowapi.errors import RateLimitExceeded
-from slowapi.util import get_remote_address
 from contextlib import asynccontextmanager
 
 from app.database import init_db
@@ -95,7 +94,6 @@ app = FastAPI(
     lifespan=lifespan
     
 )
-limiter = Limiter(key_func=get_remote_address)
 app.state.limiter = limiter
 @app.exception_handler(RateLimitExceeded)
 async def rate_limit_handler(request, exc):
