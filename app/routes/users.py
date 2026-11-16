@@ -210,7 +210,7 @@ async def get_current_user_profile(
     responses={400: {"model": ErrorResponse}, 401: {"model": ErrorResponse}}
 )
 async def update_user_profile(
-    payload: Dict[str, Any] = Body(default={}),
+    payload: UserUpdateRequest,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
@@ -218,6 +218,13 @@ async def update_user_profile(
     Update current user's profile
     """
     try:
+        payload = payload.model_dump(exclude_unset=True)
+        if payload.get("full_name"):
+            parts = payload.pop("full_name").strip().split(" ", 1)
+            payload["first_name"] = parts[0]
+            payload["last_name"] = parts[1] if len(parts) > 1 else ""
+        if "designation" in payload:
+            payload["job_title"] = payload.pop("designation")
         # Update fields safely only if the column exists on the SQLAlchemy model
         updatable_fields = [
             "first_name",

@@ -67,6 +67,8 @@ class UserUpdateRequest(BaseModel):
     designation: Optional[str] = Field(None, max_length=100)
     location: Optional[str] = Field(None, max_length=255)
     bio: Optional[str] = Field(None, max_length=1000)
+    full_name: Optional[str] = Field(None, max_length=101)
+    phone: Optional[str] = Field(None, max_length=20)
 
 class UserUpdateResponse(BaseModel):
     message: str
