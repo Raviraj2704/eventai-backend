@@ -228,7 +228,6 @@ async def health_check_v1():
 # ============================================================================
 
 logger.info("✅ EventAI Backend initialized")
-logger.info(f"📍 Database: {settings.DATABASE_URL[:50]}...")
 logger.info(f"🔐 CORS enabled for: {len(allowed_origins)} origins")
 logger.info(f"🛣️  Routes loaded: 19 route files + health endpoints")
 
