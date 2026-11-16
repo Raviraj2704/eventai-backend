@@ -72,27 +72,21 @@ def _remove_session_permanently(db: Session, session_id: int) -> bool:
 # ============================================================================
 
 def require_admin(current_user: User = Depends(get_current_user)):
-    """Verify user is admin (allows primary account id=1 or admin role)"""
-    is_admin = (
-        getattr(current_user, "is_admin", False)
-        or getattr(current_user, "role", "") == "admin"
-        or getattr(current_user, "id", None) == 1
-    )
-    if not is_admin:
-        # Allow authenticated dashboard access so frontend Admin screen works seamlessly
-        return current_user
+    """Allow only users flagged as admin."""
+    if not getattr(current_user, "is_admin", False):
+        raise HTTPException(status_code=403, detail="Admin access required")
     return current_user
 
 
 def require_role(required_roles: list):
     """Factory function to create role-based dependency"""
     async def verify_role(current_user: User = Depends(get_current_user)):
-        is_admin = getattr(current_user, "is_admin", False) or getattr(current_user, "id", None) == 1
-        user_role = getattr(current_user, "role", "admin" if is_admin else "user")
-        if user_role not in required_roles and not is_admin:
-            raise HTTPException(status_code=403, detail=f"Role '{user_role}' not authorized")
-        return current_user
-    return verify_role
+                is_admin = bool(getattr(current_user, "is_admin", False))
+                user_role = getattr(current_user, "role", "admin" if is_admin else "user")
+                if user_role not in required_roles and not is_admin:
+                 raise HTTPException(status_code=403, detail=f"Role '{user_role}' not authorized")
+                return current_user
+                return verify_role
 
 
 # ============================================================================
