@@ -4,6 +4,8 @@
 
 import logging
 import os
+
+from fastapi.responses import JSONResponse
 from app.routes.speaker_interactions import follow_router, chat_router
 from app.routes import session_interactions
 from app.routes import activity_feed
@@ -22,6 +24,9 @@ from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
+from slowapi import Limiter
+from slowapi.errors import RateLimitExceeded
+from slowapi.util import get_remote_address
 from contextlib import asynccontextmanager
 
 from app.database import init_db
@@ -88,7 +93,16 @@ app = FastAPI(
     description="Intelligent Enterprise Event Management Platform",
     version="1.0.0",
     lifespan=lifespan
+    
 )
+limiter = Limiter(key_func=get_remote_address)
+app.state.limiter = limiter
+@app.exception_handler(RateLimitExceeded)
+async def rate_limit_handler(request, exc):
+    return JSONResponse(
+        status_code=429,
+        content={"detail": "Too many attempts. Please wait a minute and try again."},
+    )
 
 # ================================================
 # CORS MIDDLEWARE CONFIGURATION (MUST BE FIRST)
