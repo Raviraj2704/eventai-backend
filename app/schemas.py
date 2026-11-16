@@ -5,19 +5,22 @@
 # Includes: All 22 features with exact imports your routes need
 # Status: PRODUCTION READY ✅
 
+from matplotlib.pyplot import title
 from pydantic import BaseModel, EmailStr, Field
 from typing import Any, Optional, List
 from datetime import datetime
+
+from backend.app.routes.session_admin import SessionCreate
 
 # ============================================================================
 # 1. AUTH & USER SCHEMAS
 # ============================================================================
 
 class RegisterSchema(BaseModel):
-    first_name: str = Field(..., min_length=1)
-    last_name: str = Field(..., min_length=1)
+    first_name: str = Field(..., min_length=1, max_length=50)
+    last_name: str = Field(..., min_length=1, max_length=50)
     email: EmailStr
-    password: str = Field(..., min_length=8)
+    password: str = Field(..., min_length=8, max_length=72)
     class Config:
         from_attributes = True
 
@@ -55,16 +58,16 @@ class UserProfileResponse(BaseModel):
     location: Optional[str] = None
     bio: Optional[str] = None
     avatar_url: Optional[str] = None
-    class Config:
+class Config:
         from_attributes = True
 
 class UserUpdateRequest(BaseModel):
-    first_name: Optional[str] = None
-    last_name: Optional[str] = None
-    designation: Optional[str] = None
-    company: Optional[str] = None
-    location: Optional[str] = None
-    bio: Optional[str] = None
+    first_name: Optional[str] = Field(None, max_length=50)
+    last_name: Optional[str] = Field(None, max_length=50)
+    company: Optional[str] = Field(None, max_length=100)
+    designation: Optional[str] = Field(None, max_length=100)
+    location: Optional[str] = Field(None, max_length=255)
+    bio: Optional[str] = Field(None, max_length=1000)
 
 class UserUpdateResponse(BaseModel):
     message: str
@@ -79,17 +82,17 @@ class AvatarUploadResponse(BaseModel):
 # ============================================================================
 
 class SessionCreate(BaseModel):
-    title: str
-    description: Optional[str] = None
+    title: str = Field(..., max_length=255)
+    description: Optional[str] = Field(None, max_length=5000)
+    location: Optional[str] = Field(None, max_length=255)
     speaker_id: Optional[int] = None
     start_time: datetime
     end_time: datetime
-    location: Optional[str] = None
     max_attendees: Optional[int] = 100
 
 class SessionUpdate(BaseModel):
-    title: Optional[str] = None
-    description: Optional[str] = None
+    title: Optional[str] = Field(None, max_length=255)
+    description: Optional[str] = Field(None, max_length=5000)
     start_time: Optional[datetime] = None
     end_time: Optional[datetime] = None
     location: Optional[str] = None
