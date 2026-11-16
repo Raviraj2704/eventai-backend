@@ -5,12 +5,11 @@
 # Includes: All 22 features with exact imports your routes need
 # Status: PRODUCTION READY ✅
 
-from matplotlib.pyplot import title
 from pydantic import BaseModel, EmailStr, Field
 from typing import Any, Optional, List
 from datetime import datetime
 
-from backend.app.routes.session_admin import SessionCreate
+
 
 # ============================================================================
 # 1. AUTH & USER SCHEMAS
