@@ -86,7 +86,8 @@ def create_session(
         return {"message": "Session successfully created!", "session_id": new_session.id}
     except Exception as e:
         db.rollback()
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.exception("Request failed")
+        raise HTTPException(status_code=500, detail="Something went wrong. Please try again.")
 
 # ============================================================================
 # DELETE A SESSION
@@ -164,8 +165,8 @@ def update_session(
         raise
     except Exception as e:
         db.rollback()
-        raise HTTPException(status_code=500, detail=str(e))
-
+        logger.exception("Request failed")
+        raise HTTPException(status_code=500, detail="Something went wrong. Please try again.")
 
 # ============================================================================
 # GET ALL SESSIONS (List)
@@ -236,7 +237,7 @@ async def get_sessions(
         }
     
     except Exception as e:
-        logger.error(f"Get sessions error: {e}")
+        logger.exception("Request failed")
         raise HTTPException(status_code=500, detail="Failed to fetch sessions")
 
 

@@ -233,9 +233,10 @@ async def create_learning_path(
     except Exception as e:
         db.rollback()
         logger.error(f"Create learning path error: {e}")
+        logger.exception("Learning path creation failed")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to create learning path: {str(e)}"
+            detail="could not create the learning path. Please try again."
         )
 
 

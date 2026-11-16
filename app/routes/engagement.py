@@ -131,7 +131,7 @@ async def get_polls(
         return {"total": total, "page": page, "limit": limit, "data": polls_data}
     
     except Exception as e:
-        logger.error(f"Get polls error: {e}")
+        logger.exception("Request failed")
         raise HTTPException(status_code=500, detail="Failed to fetch polls")
 
 
@@ -185,7 +185,8 @@ async def create_poll(
     except Exception as e:
         db.rollback()
         logger.error(f"Create poll error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.exception("Request failed")
+        raise HTTPException(status_code=500, detail="Something went wrong. Please try again.")
 
 
 @router.delete("/polls/{poll_id}")
@@ -212,7 +213,8 @@ async def delete_poll(
     except Exception as e:
         db.rollback()
         logger.error(f"Delete poll error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.exception("Request failed")
+        raise HTTPException(status_code=500, detail="Something went wrong. Please try again.")
 
 
 @router.post("/polls/{poll_id}/vote")
@@ -591,7 +593,8 @@ async def delete_quiz(
     except Exception as e:
         db.rollback()
         logger.error(f"Delete quiz error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.exception("Request failed")
+        raise HTTPException(status_code=500, detail="Something went wrong. Please try again.")
 
 
 # ============================================================================
@@ -670,7 +673,8 @@ async def create_activity(
     except Exception as e:
         db.rollback()
         logger.error(f"Create activity error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.exception("Request failed")
+        raise HTTPException(status_code=500, detail="Something went wrong. Please try again.")
 
 
 @router.delete("/activities/{activity_id}")
@@ -691,8 +695,8 @@ async def delete_activity(
     except Exception as e:
         db.rollback()
         logger.error(f"Delete activity error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
+        logger.exception("Request failed")
+        raise HTTPException(status_code=500, detail="Something went wrong. Please try again.")
 
 @router.post("/activities/{activity_id}/complete")
 async def complete_activity(

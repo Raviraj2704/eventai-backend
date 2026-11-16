@@ -314,7 +314,8 @@ def create_rating(
     except Exception as e:
         db.rollback()
         logger.error(f"Rating creation error: {e}")
+        logger.exception("Rating creation failed")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to submit rating: {str(e)}"
+            detail="Failed to create rating. Please try again."
         )

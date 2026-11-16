@@ -54,7 +54,8 @@ def create_challenge(challenge_in: QuickChallengeCreate, db: Session = Depends(g
         return {"message": "Challenge successfully created!"}
     except Exception as e:
         db.rollback()
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.exception("Request failed")
+        raise HTTPException(status_code=500, detail="Something went wrong. Please try again.")
 
 
 # ============================================================================

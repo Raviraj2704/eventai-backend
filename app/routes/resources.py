@@ -196,9 +196,10 @@ async def create_resource_link(
     except Exception as e:
         db.rollback()
         logger.error(f"Resource manual creation error: {e}")
+        logger.exception("Resource manual creation failed")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=str(e)
+            detail="Failed to create resource. Please try again."
         )
 
 # ============================================================================

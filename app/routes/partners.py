@@ -201,9 +201,10 @@ async def create_partnership(
     except Exception as e:
         db.rollback()
         logger.error(f"Create partnership error: {e}")
+        logger.exception("Partnership creation failed")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to create partnership: {str(e)}"
+            detail=" Could not create the partnership. Please try again."
         )
 
 
