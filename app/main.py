@@ -114,12 +114,6 @@ allowed_origins_str = os.getenv(
 )
 allowed_origins = [origin.strip() for origin in allowed_origins_str.split(",")]
 
-print("=" * 80)
-print("🔐 CORS CONFIGURATION")
-print("=" * 80)
-print(f"Allowed Origins: {allowed_origins}")
-print("=" * 80)
-
 # Add CORS middleware (MUST BE BEFORE OTHER MIDDLEWARE)
 app.add_middleware(
     CORSMiddleware,
