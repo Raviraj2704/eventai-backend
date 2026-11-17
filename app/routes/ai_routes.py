@@ -109,9 +109,9 @@ def _call_groq_with_fallback(messages: list, temperature: float = 0.7, max_token
             )
             content = resp.choices[0].message.content
             if content:
-                # Strip ... reasoning tags if a reasoning model was used
-                if "" in content:
-                    content = content.split("")[-1]
+                # Strip <think>...</think> reasoning blocks from reasoning models
+                if "</think>" in content:
+                    content = content.split("</think>")[-1]
                 return content.strip()
         except Exception as err:
             logger.warning(f"Groq model {model_name} skipped: {err}")
