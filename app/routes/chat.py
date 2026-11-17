@@ -265,3 +265,129 @@ def delete_message(message_id: int, db: Session = Depends(get_db), current_user:
     db.commit()
     
     return {"status": "success", "message": "Message deleted."}
+
+# ==========================================================
+# NEW DIRECT MESSAGING ROUTES (For Networking Screen)
+# ==========================================================
+from sqlalchemy import or_, and_, desc
+from pydantic import BaseModel
+
+class DirectMessageRequest(BaseModel):
+    content: str
+
+@router.get("/inbox")
+def get_inbox(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    """Fetches all recent conversations for the Networking inbox drawer."""
+    connections = db.query(ChatConnection).filter(
+        or_(ChatConnection.sender_id == current_user.id, ChatConnection.receiver_id == current_user.id)
+    ).all()
+    
+    inbox = []
+    for conn in connections:
+        partner_id = conn.receiver_id if conn.sender_id == current_user.id else conn.sender_id
+        partner = db.query(User).filter(User.id == partner_id).first()
+        if not partner:
+            continue
+        
+        # Fetch last message
+        last_msg = db.query(ChatMessage).filter(ChatMessage.connection_id == conn.id).order_by(desc(ChatMessage.created_at)).first()
+        
+        updated_at = last_msg.created_at if last_msg else conn.created_at
+        
+        inbox.append({
+            "partner_user_id": partner.id,
+            "name": f"{partner.first_name or ''} {partner.last_name or ''}".strip() or "Attendee",
+            "last_message": last_msg.content if last_msg else "No messages yet",
+            "updated_at": updated_at
+        })
+        
+    # Safely sort by most recent date
+    def get_sort_key(item):
+        dt = item["updated_at"]
+        return dt.timestamp() if hasattr(dt, "timestamp") else 0
+        
+    inbox.sort(key=get_sort_key, reverse=True)
+    return {"status": "success", "data": inbox}
+
+
+@router.get("/users/{user_id}/messages")
+def get_direct_messages(user_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    """Fetches messages between current user and a specific partner."""
+    conn = db.query(ChatConnection).filter(
+        or_(
+            and_(ChatConnection.sender_id == current_user.id, ChatConnection.receiver_id == user_id),
+            and_(ChatConnection.sender_id == user_id, ChatConnection.receiver_id == current_user.id)
+        )
+    ).first()
+    
+    if not conn:
+        return {"status": "success", "data": []}
+        
+    messages = db.query(ChatMessage).filter(ChatMessage.connection_id == conn.id).order_by(ChatMessage.created_at.asc()).all()
+    
+    formatted = []
+    for m in messages:
+        msg_time = m.created_at.strftime("%I:%M %p") if m.created_at else "Just now"
+        formatted.append({
+            "id": m.id,
+            "text": m.content,
+            "sender": "me" if m.sender_id == current_user.id else "them",
+            "time": msg_time
+        })
+        
+    return {"status": "success", "data": formatted}
+
+
+@router.post("/users/{user_id}/messages")
+def send_direct_message(user_id: int, msg: DirectMessageRequest, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    """Sends a message directly to another user (creates connection if none exists)."""
+    conn = db.query(ChatConnection).filter(
+        or_(
+            and_(ChatConnection.sender_id == current_user.id, ChatConnection.receiver_id == user_id),
+            and_(ChatConnection.sender_id == user_id, ChatConnection.receiver_id == current_user.id)
+        )
+    ).first()
+    
+    if not conn:
+        conn = ChatConnection(sender_id=current_user.id, receiver_id=user_id, status="accepted")
+        db.add(conn)
+        db.commit()
+        db.refresh(conn)
+        
+    new_msg = ChatMessage(
+        connection_id=conn.id,
+        sender_id=current_user.id,
+        content=msg.content
+    )
+    db.add(new_msg)
+    db.commit()
+    db.refresh(new_msg)
+    
+    msg_time = new_msg.created_at.strftime("%I:%M %p") if new_msg.created_at else "Just now"
+    
+    return {
+        "status": "success", 
+        "data": {
+            "id": new_msg.id, 
+            "text": new_msg.content, 
+            "sender": "me", 
+            "time": msg_time
+        }
+    }
+
+
+@router.delete("/users/{user_id}/messages")
+def clear_direct_chat(user_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    """Deletes all messages between the current user and partner."""
+    conn = db.query(ChatConnection).filter(
+        or_(
+            and_(ChatConnection.sender_id == current_user.id, ChatConnection.receiver_id == user_id),
+            and_(ChatConnection.sender_id == user_id, ChatConnection.receiver_id == current_user.id)
+        )
+    ).first()
+    
+    if conn:
+        db.query(ChatMessage).filter(ChatMessage.connection_id == conn.id).delete()
+        db.commit()
+        
+    return {"status": "success", "message": "Conversation cleared."}
