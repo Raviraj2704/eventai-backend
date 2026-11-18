@@ -1,6 +1,13 @@
 # ============================================================================
 # Main FastAPI Application
 # ============================================================================
+import sentry_sdk
+
+sentry_sdk.init(
+    dsn="https://70da20707eca2eeda3b89020fc2cdb35@o4512224978993152.ingest.us.sentry.io/4512453178425344",
+    traces_sample_rate=0.2,
+    send_default_pii=False,
+)
 
 import logging
 import os
