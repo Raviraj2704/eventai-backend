@@ -2,12 +2,12 @@
 # Analytics Routes
 # ============================================================================
 # File: app/routes/analytics.py
-# Purpose: Event analytics and dashboards
-# Status: Production-Ready ✅
+# Purpose: Event analytics and dashboards (100% Real DB Data)
+# ============================================================================
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
-from datetime import datetime
+from datetime import datetime, timedelta
 import logging
 
 from app.database import get_db
@@ -51,7 +51,6 @@ async def get_analytics_dashboard(
         total_posts = db.query(SocialPost).count()
         total_points = db.query(Leaderboard).count()
 
-        # Safely fetch top sessions without relying on missing actual_attendees column
         top_sessions = db.query(SessionModel).order_by(SessionModel.id.desc()).limit(5).all()
 
         top_sessions_data = []
@@ -76,7 +75,6 @@ async def get_analytics_dashboard(
                 "rating": session_rating
             })
 
-        # Top users by engagement
         top_users = db.query(Leaderboard).order_by(
             Leaderboard.total_points.desc()
         ).limit(5).all()
@@ -131,21 +129,21 @@ async def get_user_analytics(
     db: Session = Depends(get_db)
 ):
     """
-    Get current user's personal analytics
+    Get current user's personal analytics with real 7-day history
     """
     try:
-        sessions_attended = db.query(SessionAttendance).filter(
+        user_attendances = db.query(SessionAttendance).filter(
             SessionAttendance.user_id == current_user.id,
             SessionAttendance.attended == True
-        ).count()
+        ).all()
 
-        ratings_given = db.query(Rating).filter(
+        user_ratings = db.query(Rating).filter(
             Rating.user_id == current_user.id
-        ).count()
+        ).all()
 
-        posts_created = db.query(SocialPost).filter(
+        user_posts = db.query(SocialPost).filter(
             SocialPost.user_id == current_user.id
-        ).count()
+        ).all()
 
         leaderboard = db.query(Leaderboard).filter(
             Leaderboard.user_id == current_user.id
@@ -153,19 +151,61 @@ async def get_user_analytics(
 
         user_points = getattr(leaderboard, "total_points", 0) if leaderboard else 0
 
+        # Build real 7-day breakdown from database timestamps
+        today = datetime.utcnow().date()
+        points_trend = []
+        engagement_by_day = []
+        active_days = 0
+
+        for i in range(6, -1, -1):
+            day = today - timedelta(days=i)
+            day_label = day.strftime("%a")  # Mon, Tue, Wed...
+
+            day_sessions = sum(
+                1 for a in user_attendances
+                if getattr(a, "created_at", None) and a.created_at.date() == day
+            )
+            day_ratings = sum(
+                1 for r in user_ratings
+                if getattr(r, "created_at", None) and r.created_at.date() == day
+            )
+            day_posts = sum(
+                1 for p in user_posts
+                if getattr(p, "created_at", None) and p.created_at.date() == day
+            )
+
+            actions_count = day_sessions + day_ratings + day_posts
+            if actions_count > 0:
+                active_days += 1
+
+            # Points earned per action type (Session=20, Rating=10, Post=15)
+            estimated_day_points = (day_sessions * 20) + (day_ratings * 10) + (day_posts * 15)
+
+            points_trend.append({
+                "name": day_label,
+                "points": estimated_day_points
+            })
+            engagement_by_day.append({
+                "name": day_label,
+                "engagement": actions_count
+            })
+
         return {
             "message": "success",
             "data": {
-                "sessions_attended": sessions_attended,
-                "ratings_given": ratings_given,
-                "posts_created": posts_created,
+                "sessions_attended": len(user_attendances),
+                "ratings_given": len(user_ratings),
+                "posts_created": len(user_posts),
                 "total_points": user_points,
                 "current_rank": db.query(Leaderboard).filter(
                     Leaderboard.total_points > user_points
                 ).count() + 1,
                 "current_tier": getattr(leaderboard, "tier", "bronze") if leaderboard else "bronze",
                 "badges_earned": getattr(leaderboard, "badges_earned", 0) if leaderboard else 0,
-                "challenges_completed": getattr(leaderboard, "challenges_completed", 0) if leaderboard else 0
+                "challenges_completed": getattr(leaderboard, "challenges_completed", 0) if leaderboard else 0,
+                "active_days": active_days,
+                "points_trend": points_trend,
+                "engagement_by_day": engagement_by_day
             }
         }
 
