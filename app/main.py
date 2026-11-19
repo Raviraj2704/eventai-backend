@@ -110,21 +110,24 @@ async def rate_limit_handler(request, exc):
     )
 
 # ================================================
-# CORS MIDDLEWARE CONFIGURATION (MUST BE FIRST)
+# CORS MIDDLEWARE CONFIGURATION
 # ================================================
+env_origins_raw = os.getenv("ALLOWED_ORIGINS", "")
+env_origins_list = [o.strip() for o in env_origins_raw.split(",") if o.strip()]
 
-# Get allowed origins from environment variable
-allowed_origins_str = os.getenv(
-    "ALLOWED_ORIGINS",
-    "http://localhost:5173,http://localhost:3000,"
-    "https://frontend-livid-two-96gqet7oy4.vercel.app"
-)
-allowed_origins = [origin.strip() for origin in allowed_origins_str.split(",")]
+allowed_origins = list(dict.fromkeys([
+    *env_origins_list,
+    "https://frontend-livid-two-96gqet7oy4.vercel.app",
+    "https://event-ai-psi.vercel.app",
+    "http://localhost:5173",
+    "http://localhost:3000",
+    "http://127.0.0.1:5173",
+    "http://127.0.0.1:3000",
+]))
 
-# Add CORS middleware (MUST BE BEFORE OTHER MIDDLEWARE)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=allowed_origins,  # Use environment variable
+    allow_origins=allowed_origins,
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
     allow_headers=[
@@ -136,7 +139,7 @@ app.add_middleware(
         "Origin",
     ],
     expose_headers=["Content-Length", "Content-Range", "X-Request-ID"],
-    max_age=86400,  # 24 hours
+    max_age=86400,
 )
 
 # ================================================
