@@ -16,6 +16,8 @@ if sentry_dsn:
         send_default_pii=False,
     )
 
+from sqlalchemy import text
+from app.database import init_db, engine
 from fastapi.responses import JSONResponse
 from app.routes.speaker_interactions import follow_router, chat_router
 from app.routes import session_interactions
@@ -213,20 +215,25 @@ async def root():
 
 @app.get("/health")
 async def health_check():
-    """Health check endpoint"""
-    return {
-        "status": "healthy",
-        "app": os.getenv("APP_NAME", "EventAI"),
-        "version": os.getenv("APP_VERSION", "1.0.0")
-    }
-
-@app.get("/api/v1/health")
-async def health_check_v1():
-    """Health check endpoint v1"""
-    return {
-        "status": "healthy",
-        "api": "EventAI v1.0.0"
-    }
+    """Health check endpoint with live database ping"""
+    try:
+        with engine.connect() as conn:
+            conn.execute(text("SELECT 1"))
+        return {
+            "status": "healthy",
+            "database": "connected",
+            "app": os.getenv("APP_NAME", "EventAI"),
+            "version": os.getenv("APP_VERSION", "1.0.0"),
+        }
+    except Exception as e:
+        logger.error(f"Health check DB ping failed: {e}")
+        return JSONResponse(
+            status_code=503,
+            content={
+                "status": "unhealthy",
+                "database": "disconnected",
+            },
+        )
 
 # ============================================================================
 # LOGGING & INFO
