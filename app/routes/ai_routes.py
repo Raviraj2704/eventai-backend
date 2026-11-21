@@ -3,7 +3,8 @@
 # ============================================================================
 
 from app.routes.blocks import blocked_user_ids
-from fastapi import APIRouter, Depends, HTTPException, Query, BackgroundTasks
+from fastapi import APIRouter, Depends, HTTPException, Query, BackgroundTasks, Request
+from app.rate_limit import limiter
 from sqlalchemy.orm import Session
 from sqlalchemy import String, func, and_
 from datetime import datetime, timedelta
@@ -225,7 +226,9 @@ def _build_smart_db_response(
 # ============================================================================
 
 @router.get("/recommendations/sessions", response_model=dict)
+@limiter.limit("15/minute")
 async def get_ai_recommendations(
+    request: Request,
     db: Session = Depends(get_db),
     current_user: Any = Depends(get_current_user),
     limit: int = Query(5, ge=1, le=20)
@@ -329,7 +332,9 @@ async def get_ai_recommendations(
 # ============================================================================
 
 @router.post("/chat")
+@limiter.limit("15/minute")
 async def ai_chat(
+    request: Request,
     request_body: dict,
     db: Session = Depends(get_db),
     current_user: Any = Depends(get_current_user)
@@ -434,7 +439,9 @@ Instructions:
 # ============================================================================
 
 @router.get("/sessions/{session_id}/summary")
+@limiter.limit("10/minute")
 async def get_session_summary(
+    request: Request,
     session_id: int,
     db: Session = Depends(get_db),
     current_user: Any = Depends(get_current_user)
@@ -582,7 +589,9 @@ async def get_session_quiz(
 # ============================================================================
 
 @router.get("/networking/matches")
+@limiter.limit("15/minute")
 async def get_network_matches(
+    request: Request,
     filter_type: str = Query("all"),
     db: Session = Depends(get_db),
     current_user: Any = Depends(get_current_user),
@@ -779,7 +788,9 @@ async def submit_quiz(
         raise HTTPException(status_code=500, detail="Failed to submit quiz")
 
 @router.post("/sessions/{session_id}/quiz/generate")
+@limiter.limit("5/minute")
 async def generate_session_quiz(
+    request: Request,
     session_id: int,
     db: Session = Depends(get_db),
     current_user: Any = Depends(get_current_user)
