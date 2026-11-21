@@ -113,6 +113,25 @@ async def list_users(
 
         total = query.count()
         users = query.offset(offset).limit(limit).all()
+        user_ids = [u.id for u in users]
+        attendance_counts = {}
+        if user_ids:
+            try:
+                rows = (
+                    db.query(
+                        SessionAttendance.user_id,
+                        func.count(SessionAttendance.id),
+                    )
+                    .filter(
+                        SessionAttendance.user_id.in_(user_ids),
+                        SessionAttendance.attended == True,
+                    )
+                    .group_by(SessionAttendance.user_id)
+                    .all()
+                )
+                attendance_counts = {uid: cnt for uid, cnt in rows}
+            except Exception:
+                attendance_counts = {}
 
         user_list = []
         for u in users:
@@ -131,13 +150,7 @@ async def list_users(
             if active_flag is None:
                 active_flag = True
 
-            try:
-                attended_count = db.query(func.count(SessionAttendance.id)).filter(
-                    SessionAttendance.user_id == u.id,
-                    SessionAttendance.attended == True
-                ).scalar() or 0
-            except Exception:
-                attended_count = 0
+            attended_count = attendance_counts.get(u.id, 0)
 
             created_iso = u.created_at.isoformat() if getattr(u, "created_at", None) else datetime.utcnow().isoformat()
 
