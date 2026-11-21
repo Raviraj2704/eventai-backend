@@ -370,7 +370,7 @@ class Session(Base):
     id = Column(Integer, primary_key=True)
     title = Column(String(255), nullable=False)
     description = Column(Text, nullable=False)
-    speaker_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    speaker_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
     start_time = Column(DateTime, nullable=False)
     end_time = Column(DateTime, nullable=False)
     location = Column(String(255), nullable=True)
@@ -487,7 +487,7 @@ class Rating(Base):
     __tablename__ = "ratings"
 
     resource_id = Column(Integer, ForeignKey("resources.id"), index=True) 
-    learning_path_id = Column(Integer, ForeignKey("learning_paths.id"), nullable=True)   
+    learning_path_id = Column(Integer, ForeignKey("learning_paths.id"), nullable=True, index=True)   
     
     # Primary Key
     id = Column(Integer, primary_key=True, index=True)
@@ -1900,9 +1900,9 @@ class ChatConnection(Base):
     __tablename__ = "chat_connections"
 
     id = Column(Integer, primary_key=True, index=True)
-    sender_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
-    receiver_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
-    
+    sender_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    receiver_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+
     # status can be: 'pending', 'accepted', 'rejected', 'blocked'
     status = Column(String, default="pending", nullable=False) 
     
@@ -1919,8 +1919,8 @@ class ChatMessage(Base):
     __tablename__ = "chat_messages"
 
     id = Column(Integer, primary_key=True, index=True)
-    connection_id = Column(Integer, ForeignKey("chat_connections.id", ondelete="CASCADE"), nullable=False)
-    sender_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    connection_id = Column(Integer, ForeignKey("chat_connections.id", ondelete="CASCADE"), nullable=False, index=True)
+    sender_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
     
     content = Column(Text, nullable=False)
     is_read = Column(Boolean, default=False)
