@@ -1,16 +1,20 @@
 # ============================================================================
 # Main FastAPI Application
 # ============================================================================
-import sentry_sdk
-
-sentry_sdk.init(
-    dsn="https://70da20707eca2eeda3b89020fc2cdb35@o4512224978993152.ingest.us.sentry.io/4512453178425344",
-    traces_sample_rate=0.2,
-    send_default_pii=False,
-)
-
 import logging
 import os
+from dotenv import load_dotenv
+import sentry_sdk
+
+load_dotenv()
+
+sentry_dsn = os.getenv("SENTRY_DSN")
+if sentry_dsn:
+    sentry_sdk.init(
+        dsn=sentry_dsn,
+        traces_sample_rate=0.2,
+        send_default_pii=False,
+    )
 
 from fastapi.responses import JSONResponse
 from app.routes.speaker_interactions import follow_router, chat_router
@@ -27,7 +31,6 @@ from app.routes import blocks
 from app.routes import meetings
 from app.routes import favourites
 from app.routes import social_reactions
-from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
@@ -192,9 +195,7 @@ app.include_router(favourites.router, prefix="/api/v1/favourites", tags=["Favour
 app.include_router(social_reactions.router, prefix="/api/v1/social", tags=["Social Reactions"])
 app.include_router(analytics.router, prefix="/api/v1/analytics", tags=["Analytics"])
 app.include_router(ai_routes.router, prefix="/api/v1/ai", tags=["AI Features"])
-app.include_router(session_admin.router, prefix="/api/v1/session-admin", tags=["Session Admin"])
 app.include_router(messages.router, prefix="/api/v1/messages", tags=["Messages"])
-app.include_router(activity_feed.router, prefix="/api/v1/activity", tags=["Activity Feed"])
 app.include_router(session_hub.router, prefix="/api/v1/session-hub", tags=["Session Hub"])
 
 # ============================================================================
