@@ -1868,7 +1868,7 @@ class SessionBookmark(Base):
     
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
-    session_id = Column(Integer, ForeignKey("session_events.id"), nullable=False, index=True)
+    session_id = Column(Integer, ForeignKey("sessions.id"), nullable=False, index=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     
     # Ensure a user can't bookmark the same session twice
